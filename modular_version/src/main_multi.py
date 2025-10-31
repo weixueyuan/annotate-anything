@@ -47,34 +47,45 @@ class TaskManager:
     
     def _load_data(self):
         """加载数据（支持数据库模式和 JSONL 模式）"""
-        # 优先查找 JSONL 文件（debug 模式）
-        jsonl_files = [
-            'test.jsonl',  # 优先使用测试文件
-            # 'merged_attributes.jsonl',  # 备用完整数据
-        ]
-        
-        jsonl_path = None
-        for jsonl_file in jsonl_files:
-            if os.path.exists(jsonl_file):
-                jsonl_path = jsonl_file
-                break
+        # 从配置中获取 JSONL 文件路径（一个配置对应一个 JSONL 文件）
+        jsonl_file = self.path_config.get('jsonl_file')
         
         # 模式选择：JSONL 优先，数据库次之
-        if jsonl_path:
-            # JSONL 模式（直接读取文件）
-            print(f"📄 JSONL 模式: {jsonl_path}")
-            self.data_handler = JSONLHandler(jsonl_path)
+        if jsonl_file and os.path.exists(jsonl_file):
+            # JSONL 模式（直接读取配置文件指定的 JSONL 文件）
+            print(f"📄 JSONL 模式: {jsonl_file}")
+            self.data_handler = JSONLHandler(jsonl_file)
             self.data_source = 'jsonl'
+        elif jsonl_file:
+            # 配置了 JSONL 文件但不存在
+            print(f"⚠️  配置的 JSONL 文件不存在: {jsonl_file}")
+            print(f"   尝试使用数据库模式...")
+            if os.path.exists(self.db_path):
+                print(f"🗄️  数据库模式: {self.db_path}")
+                self.data_handler = DatabaseHandler(self.db_path)
+                self.data_source = 'database'
+            else:
+                print(f"❌ 未找到数据源")
+                print(f"   - JSONL: {jsonl_file} (不存在)")
+                print(f"   - 数据库: {self.db_path} (不存在)")
+                self.data_handler = None
+                self.all_data = {}
+                self.visible_keys = []
+                return
         elif os.path.exists(self.db_path):
-            # 数据库模式
+            # 未配置 JSONL 文件，使用数据库模式
             print(f"🗄️  数据库模式: {self.db_path}")
             self.data_handler = DatabaseHandler(self.db_path)
             self.data_source = 'database'
         else:
             # 无数据源
             print(f"⚠️  未找到数据源")
+            if jsonl_file:
+                print(f"   - JSONL: {jsonl_file} (不存在)")
+            else:
+                print(f"   - JSONL: 未配置")
             print(f"   - 数据库: {self.db_path} (不存在)")
-            print(f"   - JSONL: test.jsonl 或 merged_attributes.jsonl (不存在)")
+            print(f"   请在 PATH_CONFIG 中配置 'jsonl_file' 或运行: python tools/import_to_db.py")
             self.data_handler = None
             self.all_data = {}
             self.visible_keys = []

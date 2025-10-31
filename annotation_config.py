@@ -9,43 +9,55 @@ TASK_INFO = {
     "description": "标注物体的基本属性信息"
 }
 
-# 字段配置（通用版本，支持多种数据格式）
-# 说明：
-# - "key": 数据字段名称
-# - "label": UI显示标签
-# - "type": 组件类型（目前只支持textbox）
-# - "lines": 文本框行数
-# - "has_checkbox": 是否显示错误标记勾选框
-# - "placeholder": 占位符文本
-# - "flex": 布局弹性系数（数字越大占用空间越多）
-# - "process": 字段处理方式（"array_to_string"表示数组转字符串）
+# 字段配置（从旧版config.py迁移）
 FIELD_CONFIG = [
     {
-        "key": "object_name",
-        "label": "Object Name (物体名称)",
+        "key": "category",
+        "label": "Category (类别)",
         "type": "textbox",
         "lines": 1,
         "has_checkbox": True,
+        "placeholder": "",
         "flex": 1,
         "process": None
     },
     {
-        "key": "dimension",
-        "label": "Dimension (尺寸)",
+        "key": "description",
+        "label": "Description (描述)",
+        "type": "textbox",
+        "lines": 3,
+        "has_checkbox": True,
+        "placeholder": "",
+        "flex": 2
+    },
+    {
+        "key": "material",
+        "label": "Material (材质)",
         "type": "textbox",
         "lines": 1,
         "has_checkbox": True,
+        "placeholder": "",
+        "flex": 1
+    },
+    {
+        "key": "dimensions",
+        "label": "Dimensions (尺寸)",
+        "type": "textbox",
+        "lines": 1,
+        "has_checkbox": True,
+        "placeholder": "例如: Small, Medium, Large",
         "flex": 1,
         "process": None
     },
     {
-        "key": "overall_description",
-        "label": "Overall Description (整体描述)",
+        "key": "placement",
+        "label": "Placement (放置位置)",
         "type": "textbox",
-        "lines": 5,
+        "lines": 1,
         "has_checkbox": True,
-        "flex": 3,
-        "process": "array_to_string"  # 数据中是数组格式，需要转换为逗号分隔字符串显示
+        "placeholder": "例如: OnTable, OnFloor",
+        "flex": 1,
+        "process": "array_to_string"
     }
 ]
 
@@ -61,15 +73,8 @@ UI_CONFIG = {
 }
 
 # 路径配置（从旧版config.py迁移）
-# 说明：一个配置对应一个 JSONL 文件，通过 jsonl_file 指定数据源
 PATH_CONFIG = {
-    # 数据源：JSONL 文件路径（必需）
-    "jsonl_file": "/mnt/inspurfs/IDC_t/lvzhaoyang_group/digital_content/lianxinyu/datasets/partnet_mobility_by_category_processed/box/main_jsonl",
-    
-    # GIF 图片基础路径
     "base_path": "/mnt/data/GRScenes-100/instances/renderings",
-    
-    # GIF 文件名模式
     "gif_filename_pattern": "{model_id}_fixed.gif",
 }
 
