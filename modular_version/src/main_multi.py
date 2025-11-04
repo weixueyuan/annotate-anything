@@ -19,6 +19,7 @@ sys.path.insert(0, str(project_root))
 from src.db_handler import DatabaseHandler
 from src.jsonl_handler import JSONLHandler
 from src.field_processor import FieldProcessor
+from src.component_factory import ComponentFactory
 from routes import ROUTES, DEFAULT_PORT
 
 
@@ -31,12 +32,28 @@ class TaskManager:
         self.task_name = task_config['task']
         self.debug = debug
         
-        # 加载UI配置
+        # 加载UI配置（新架构）
         config_module = importlib.import_module(f"ui_configs.{self.task_name}_config")
-        self.field_configs = config_module.FIELD_CONFIG
+        
+        self.components_config = config_module.COMPONENTS
+        self.layout_config = config_module.LAYOUT_CONFIG
         self.ui_config = config_module.UI_CONFIG
         self.task_info = config_module.TASK_INFO
         self.custom_css = getattr(config_module, 'CUSTOM_CSS', '')
+        
+        # 从COMPONENTS中提取字段配置（用于数据处理）
+        self.field_configs = []
+        for comp in self.components_config:
+            if comp.get('has_checkbox'):  # 如果有checkbox，说明是字段
+                self.field_configs.append({
+                    'key': comp['id'],
+                    'label': comp['label'],
+                    'type': comp['type'],
+                    'lines': comp.get('lines', 1),
+                    'has_checkbox': True,
+                    'placeholder': comp.get('placeholder', ''),
+                    'process': comp.get('process')
+                })
         
         # 数据库路径
         self.db_path = f"databases/{self.task_name}.db"
@@ -94,114 +111,15 @@ class TaskManager:
         print(f"✓ 加载完成")
         print(f"  总数: {len(self.all_data)}, 可见: {len(self.visible_keys)}")
     
-    def build_annotation_components(self, demo=None):
-        """
-        构建标注界面组件（可用于嵌入到其他界面中）
-        
-        Args:
-            demo: 已有的Blocks对象，如果为None则创建新的
-        
-        Returns:
-            组件字典和事件绑定函数
-        """
-        if not self.data_handler:
-            return None, None, None
-        
-        components = {}
-        bindings = {}
-        
-        # 创建所有组件（但不绑定到demo）
-        with gr.Column() if demo is None else gr.Column():
-            # 用户信息
-            if self.ui_config.get('show_user_info'):
-                other_count = len(self.all_data) - len(self.visible_keys)
-                components['user_info'] = gr.HTML(self._render_user_info(len(self.visible_keys), other_count))
-            
-            current_index = gr.State(value=0)
-            components['current_index'] = current_index
-            nav_direction = gr.State(value="next")
-            components['nav_direction'] = nav_direction
-            
-            # Model ID 和状态框
-            with gr.Row(equal_height=True, elem_id="search_row"):
-                model_id_display = gr.Textbox(label="Model ID", interactive=False, scale=3)
-                components['model_id_display'] = model_id_display
-                status_box = gr.HTML(value="") if self.ui_config.get('show_status') else None
-                if status_box:
-                    components['status_box'] = status_box
-            
-            # GIF 和属性字段
-            with gr.Row(elem_id="main_content_row"):
-                with gr.Column(scale=1, elem_id="gif_container"):
-                    gif_display = gr.Image(label="物体可视化", type="filepath", height=580, container=True, show_download_button=False)
-                    components['gif_display'] = gif_display
-                
-                with gr.Column(scale=1, elem_id="info_column"):
-                    field_components = []
-                    checkbox_components = []
-                    
-                    for field in self.field_configs:
-                        with gr.Column():
-                            if field.get('has_checkbox') and self.ui_config.get('enable_checkboxes'):
-                                chk = gr.Checkbox(
-                                    label=f"{self.ui_config.get('checkbox_label', '✗')} {field['label']}", 
-                                    value=False, container=False
-                                )
-                                checkbox_components.append(chk)
-                            
-                            comp = gr.Textbox(
-                                label="",
-                                lines=field.get('lines', 1),
-                                placeholder=field.get('placeholder', ''),
-                                show_label=False
-                            )
-                            field_components.append(comp)
-                    
-                    components['field_components'] = field_components
-                    components['checkbox_components'] = checkbox_components
-            
-            # 按钮和进度
-            with gr.Row():
-                prev_btn = gr.Button("⬅️ 上一个", size="lg")
-                save_btn = gr.Button("💾 保存", variant="primary", size="lg")
-                next_btn = gr.Button("➡️ 下一个", size="lg")
-                components['prev_btn'] = prev_btn
-                components['save_btn'] = save_btn
-                components['next_btn'] = next_btn
-            
-            progress = gr.Textbox(label="进度", interactive=False)
-            components['progress'] = progress
-            
-            # 导出按钮
-            if not self.debug and self.data_source == 'database':
-                with gr.Row():
-                    export_btn = gr.Button("📤 导出为JSONL", variant="secondary", size="lg")
-                    export_status = gr.Textbox(label="导出状态", interactive=False, visible=False)
-                    components['export_btn'] = export_btn
-                    components['export_status'] = export_status
-            
-            # 确认弹窗
-            with gr.Column(visible=False, elem_id="confirm_modal") as confirm_modal:
-                with gr.Column(elem_id="confirm_card"):
-                    gr.HTML("<h2>⚠️ 有未保存的修改</h2><p>是否继续？</p>")
-                    with gr.Row():
-                        save_and_continue = gr.Button("💾 保存并继续", variant="primary", size="sm")
-                        cancel_nav = gr.Button("❌ 取消", variant="secondary", size="sm")
-                    skip_changes = gr.Button("⚠️ 放弃更改", variant="stop", size="sm")
-                    components['confirm_modal'] = confirm_modal
-                    components['save_and_continue'] = save_and_continue
-                    components['cancel_nav'] = cancel_nav
-                    components['skip_changes'] = skip_changes
-        
-        # 返回组件字典（用于后续绑定事件）
-        return components, bindings
-    
     def build_interface(self):
-        """构建界面"""
+        """使用组件工厂构建界面（新架构）"""
         if not self.data_handler:
             with gr.Blocks() as demo:
                 gr.Markdown(f"# ⚠️ 数据库未初始化\n运行: `python tools/import_to_db.py`")
             return demo
+        
+        # 创建组件工厂
+        factory = ComponentFactory()
         
         with gr.Blocks(title=self.ui_config['title'], css=self.custom_css) as demo:
             gr.Markdown(f"# {self.ui_config['title']}")
@@ -211,65 +129,16 @@ class TaskManager:
                 other_count = len(self.all_data) - len(self.visible_keys)
                 _ = gr.HTML(self._render_user_info(len(self.visible_keys), other_count))
             
+            # State组件
             current_index = gr.State(value=0)
             nav_direction = gr.State(value="next")
+            original_dimensions = gr.State(value="")  # 存储原始dimensions值
             
-            # Model ID 和状态框（单独一行）
-            with gr.Row(equal_height=True, elem_id="search_row"):
-                model_id_display = gr.Textbox(label="Model ID", interactive=False, scale=3)
-                status_box = gr.HTML(value="") if self.ui_config.get('show_status') else None
+            # 使用布局配置构建界面（同时创建和渲染组件）
+            factory.build_layout(self.components_config, self.layout_config)
             
-            # GIF 和属性字段（分两列）
-            with gr.Row(elem_id="main_content_row"):
-                # 左：GIF
-                with gr.Column(scale=1, elem_id="gif_container"):
-                    gif_display = gr.Image(label="物体可视化", type="filepath", height=580, container=True, show_download_button=False)
-                
-                # 右：字段
-                with gr.Column(scale=1, elem_id="info_column"):
-                    # 字段组件
-                    field_components = []
-                    checkbox_components = []
-                    
-                    # 尺度滑块相关（用于dimensions字段）
-                    scale_slider = None
-                    original_dimensions = gr.State(value="")  # 存储原始dimensions值
-                    
-                    for field in self.field_configs:
-                        with gr.Column():
-                            if field.get('has_checkbox') and self.ui_config.get('enable_checkboxes'):
-                                chk = gr.Checkbox(
-                                    label=f"{self.ui_config.get('checkbox_label', '✗')} {field['label']}", 
-                                    value=False, container=False
-                                )
-                                checkbox_components.append(chk)
-                            
-                            comp = gr.Textbox(
-                                label="",
-                                lines=field.get('lines', 1),
-                                placeholder=field.get('placeholder', ''),
-                                show_label=False
-                            )
-                            field_components.append(comp)
-                            
-                            # 为dimensions字段添加尺度滑块
-                            if field['key'] == 'dimensions':
-                                scale_slider = gr.Slider(
-                                    minimum=0.01,
-                                    maximum=2.0,
-                                    value=1.0,
-                                    step=0.01,
-                                    label="尺度缩放 (Scale)",
-                                    info="调整尺寸的缩放比例"
-                                )
-            
-            # 按钮和进度（单独在下面）
-            with gr.Row():
-                prev_btn = gr.Button("⬅️ 上一个", size="lg")
-                save_btn = gr.Button("💾 保存", variant="primary", size="lg")
-                next_btn = gr.Button("➡️ 下一个", size="lg")
-            
-            progress = gr.Textbox(label="进度", interactive=False)
+            # 获取创建的组件
+            components = factory.get_all_components()
             
             # 导出按钮（仅在正常模式下显示）
             export_btn = None
@@ -288,65 +157,130 @@ class TaskManager:
                         cancel_nav = gr.Button("❌ 取消", variant="secondary", size="sm")
                     skip_changes = gr.Button("⚠️ 放弃更改", variant="stop", size="sm")
             
-            # 事件处理
+            # ========== 事件处理函数 ==========
+            
+            # 提取字段组件和checkbox组件
+            field_components = []
+            checkbox_components = []
+            for field_config in self.field_configs:
+                field_id = field_config['key']
+                comp = components.get(field_id)
+                if isinstance(comp, tuple):
+                    # (textbox, checkbox) 元组
+                    field_components.append(comp[0])
+                    checkbox_components.append(comp[1])
+                else:
+                    field_components.append(comp)
+            
+            # 获取其他组件
+            gif_display = components.get('image_url')
+            model_id_display = components.get('model_id')  # 既用于显示也用于搜索
+            status_box = components.get('annotation_status')
+            progress = components.get('progress_box')
+            scale_slider = components.get('scale_slider')
+            prev_btn = components.get('prev_btn')
+            next_btn = components.get('next_btn')
+            save_btn = components.get('save_btn')
+            
             def load_data(index):
+                """
+                根据组件配置动态加载数据
+                通过 data_field 属性将数据库字段映射到UI组件
+                """
                 if not self.visible_keys or index >= len(self.visible_keys):
-                    empty_count = 2 + len(field_components) + len(checkbox_components) + (1 if status_box else 0) + 1 + 2  # +2 for original_dimensions and scale_slider
-                    return [""] * (empty_count - 1) + [1.0]  # last element is scale_slider value
+                    # 返回空值（数量根据组件配置动态计算，跳过按钮）
+                    empty_result = []
+                    for comp_config in self.components_config:
+                        comp_type = comp_config['type']
+                        # 跳过按钮组件（不在输出列表中）
+                        if comp_type == 'button':
+                            continue
+                        
+                        if comp_config.get('has_checkbox'):
+                            empty_result.append("")  # 字段值
+                            empty_result.append(False)  # checkbox值
+                        elif comp_config['id'] == 'scale_slider':
+                            empty_result.append(1.0)  # 滑块默认值（float）
+                        else:
+                            empty_result.append("")
+                    return empty_result + [""]  # +1 for original_dimensions state
                 
                 model_id = self.visible_keys[index]
                 item = self.all_data[model_id]
                 attrs = self.data_handler.parse_item(item)
                 
-                # 【关键改动】浏览即占有：如果数据未分配，立即分配给当前用户
+                # 浏览即占有
                 current_uid = attrs.get('uid', '')
                 if not current_uid or current_uid == '':
-                    # 数据未分配，立即占有（只设置uid，不触碰其他数据）
                     self.data_handler.assign_to_user(model_id, self.user_uid)
                     print(f"🔒 占有数据: {model_id} -> {self.user_uid}")
-                    # 刷新缓存
                     self.all_data = self.data_handler.load_data()
-                    # 重新计算可见数据（排除其他用户已占有的数据）
                     self.visible_keys = []
                     for key, value in self.all_data.items():
                         item_attrs = self.data_handler.parse_item(value)
                         item_uid = item_attrs.get('uid', '')
                         if not item_uid or item_uid == self.user_uid:
                             self.visible_keys.append(key)
-                    # 重新获取属性（现在包含了uid）
                     item = self.all_data[model_id]
                     attrs = self.data_handler.parse_item(item)
                 
-                # 直接使用 image_url（数据源已提供：数据库导入时生成，JSONL读取时生成）
-                gif_path = attrs.get('image_url', None)
+                # 根据配置动态构建返回值（跳过按钮）
+                result = []
+                original_dims_value = ""  # 用于尺度滑块
                 
-                # 检查文件是否存在
-                if gif_path and not os.path.exists(gif_path):
-                    gif_path = None
-                
-                field_values = []
-                checkbox_values = []
-                for field in self.field_configs:
-                    value = attrs.get(field['key'], '')
-                    field_values.append(self.field_processor.process_load(field, value))
+                for comp_config in self.components_config:
+                    comp_id = comp_config['id']
+                    comp_type = comp_config['type']
                     
-                    if field.get('has_checkbox'):
-                        checkbox_values.append(attrs.get(f"chk_{field['key']}", False))
+                    # 跳过按钮组件（不在输出列表中）
+                    if comp_type == 'button':
+                        continue
+                    
+                    data_field = comp_config.get('data_field', comp_id)  # 默认使用id作为字段名
+                    
+                    # 处理特殊字段
+                    if data_field == 'model_id':
+                        result.append(model_id)
+                    
+                    elif data_field == 'image_url':
+                        # 图片路径，检查文件是否存在
+                        img_path = attrs.get('image_url', None)
+                        if img_path and not os.path.exists(img_path):
+                            img_path = None
+                        result.append(img_path)
+                    
+                    elif data_field == '_computed_status':
+                        # 动态计算的状态
+                        status_html = self._render_status(attrs.get('annotated', False))
+                        result.append(status_html)
+                    
+                    elif comp_id == 'progress_box':
+                        # 进度显示
+                        prog = f"{index + 1} / {len(self.visible_keys)}"
+                        result.append(prog)
+                    
+                    elif comp_id == 'scale_slider':
+                        # 尺度滑块重置为1.0（确保是float类型）
+                        result.append(float(1.0))
+                    
+                    elif comp_config.get('has_checkbox'):
+                        # 带checkbox的字段
+                        value = attrs.get(data_field, '')
+                        # 使用 field_processor 处理字段值
+                        field_info = {'key': data_field, 'process': comp_config.get('process')}
+                        processed_value = self.field_processor.process_load(field_info, value)
+                        result.append(processed_value)
+                        
+                        # 添加checkbox值
+                        checkbox_value = attrs.get(f"chk_{data_field}", False)
+                        result.append(checkbox_value)
+                        
+                        # 保存dimensions原始值（用于尺度滑块）
+                        if data_field == 'dimensions':
+                            original_dims_value = attrs.get('dimensions', '')
                 
-                prog = f"{index + 1} / {len(self.visible_keys)}"
-                
-                # 获取原始dimensions值（用于尺度调整）
-                orig_dims = attrs.get('dimensions', '')
-                
-                result = [gif_path, model_id] + field_values + checkbox_values
-                if status_box:
-                    status_html = self._render_status(attrs.get('annotated', False))
-                    result.append(status_html)
-                result.append(prog)
-                
-                # 添加原始dimensions和重置slider
-                result.append(orig_dims)  # original_dimensions state
-                result.append(1.0)  # reset scale_slider to 1.0
+                # 添加 original_dimensions state
+                result.append(original_dims_value)
                 
                 return result
             
@@ -354,22 +288,14 @@ class TaskManager:
                 """根据尺度滑块值计算缩放后的dimensions"""
                 if not original_dims or not original_dims.strip():
                     return ""
-                
                 try:
-                    # 解析dimensions字符串，格式如 "0.6 * 0.4 * 0.02"
                     parts = original_dims.replace('*', ' ').split()
                     numbers = [float(p.strip()) for p in parts if p.strip()]
-                    
                     if not numbers:
                         return original_dims
-                    
-                    # 应用缩放
                     scaled_numbers = [n * scale_value for n in numbers]
-                    
-                    # 重新组装字符串
                     result = ' * '.join([f"{n:.2f}" if n >= 0.01 else f"{n:.4f}" for n in scaled_numbers])
                     return result
-                    
                 except Exception as e:
                     print(f"⚠️  尺度计算错误: {e}")
                     return original_dims
@@ -384,7 +310,7 @@ class TaskManager:
                 elif 0 <= index < len(self.visible_keys):
                     resolved_model = self.visible_keys[index]
                 return resolved_index, resolved_model
-
+            
             def save_data(index, model_id, *values):
                 resolved_index, resolved_model = _resolve_model(index, model_id)
                 if resolved_model is None:
@@ -394,206 +320,249 @@ class TaskManager:
                 field_values = values[:num_fields]
                 checkbox_values = values[num_fields:]
                 
-                save_dict = {}
-                checkbox_idx = 0
-                has_error = False  # 检查是否有任何勾选框被选中
+                attributes = {}
+                has_error = False  # 追踪是否有任何checkbox被选中
                 
-                for idx, field in enumerate(self.field_configs):
+                for i, field in enumerate(self.field_configs):
                     key = field['key']
-                    save_dict[key] = self.field_processor.process_save(field, field_values[idx])
-                    if field.get('has_checkbox'):
-                        chk_value = checkbox_values[checkbox_idx]
-                        save_dict[f"chk_{key}"] = chk_value
-                        if chk_value:  # 如果有任何勾选框被选中
+                    value = field_values[i]
+                    attributes[key] = self.field_processor.process_save(field, value)
+                    if field.get('has_checkbox') and i < len(checkbox_values):
+                        chk_value = checkbox_values[i]
+                        attributes[f"chk_{key}"] = chk_value
+                        if chk_value:  # 如果任何checkbox被选中，标记为有错误
                             has_error = True
-                        checkbox_idx += 1
                 
-                # 计算 score：如果任意勾选框被选中，score=0；否则score=1
+                # 计算score：如果任意一个checkbox被选中，score=0；否则score=1
                 score = 0 if has_error else 1
                 
-                # 保存（传递 uid）
-                self.data_handler.save_item(resolved_model, save_dict, score=score, uid=self.user_uid)
+                self.data_handler.save_item(resolved_model, attributes, score=score, uid=self.user_uid)
                 print(f"✅ 保存: {resolved_model}, score={score}, uid={self.user_uid}")
                 
-                # 更新缓存（重新加载以获取最新的文件内容）
                 self.all_data = self.data_handler.load_data()
-                
-                # 重新加载数据
                 return load_data(resolved_index)
             
-            # 修改检测函数（简化版：直接比较，避免类型转换问题）
-            def check_modified(index, model_id, *values):
-                """检查当前数据是否被修改"""
-                if not self.visible_keys:
+            def go_prev(index, model_id):
+                """上一个：只返回新的 model_id"""
+                resolved_index, _ = _resolve_model(index, model_id)
+                new_index = max(0, resolved_index - 1)
+                new_model_id = self.visible_keys[new_index] if new_index < len(self.visible_keys) else ""
+                return new_model_id
+            
+            def go_next(index, model_id):
+                """下一个：只返回新的 model_id"""
+                resolved_index, _ = _resolve_model(index, model_id)
+                new_index = min(len(self.visible_keys) - 1, resolved_index + 1)
+                new_model_id = self.visible_keys[new_index] if new_index < len(self.visible_keys) else ""
+                return new_model_id
+            
+            def search_and_load(search_value):
+                """
+                搜索功能：根据输入的值查找对应的 model_id
+                
+                Args:
+                    search_value: model_id输入框的值
+                    
+                Returns:
+                    更新后的所有组件值
+                """
+                if not search_value or not search_value.strip():
+                    # 空搜索，不做任何操作，保持当前数据
+                    return [current_index.value] + load_data(current_index.value)
+                
+                search_value = search_value.strip()
+                
+                # 查找 model_id（在 visible_keys 中）
+                if search_value in self.visible_keys:
+                    # 找到了，跳转到该索引
+                    new_index = self.visible_keys.index(search_value)
+                    print(f"🔍 搜索成功: {search_value} (索引 {new_index})")
+                    return [new_index] + load_data(new_index)
+                else:
+                    # 未找到，提示用户，保持当前数据
+                    print(f"⚠️  未找到: {search_value}")
+                    return [current_index.value] + load_data(current_index.value)
+            
+            def has_real_changes(index, model_id, *field_values_and_checkboxes):
+                """检查当前字段值是否与数据库中的原始值不同"""
+                if not self.visible_keys or index >= len(self.visible_keys):
                     return False
                 
-                resolved_index, resolved_model = _resolve_model(index, model_id)
-                if resolved_model is None or not (0 <= resolved_index < len(self.visible_keys)):
+                # 获取数据库中的原始数据
+                current_model_id = self.visible_keys[index]
+                if current_model_id not in self.all_data:
                     return False
                 
-                item = self.all_data.get(resolved_model)
-                if item is None:
-                    # 尝试刷新缓存
-                    self.all_data = self.data_handler.load_data()
-                    item = self.all_data.get(resolved_model)
-                    if item is None:
-                        return False
+                item = self.all_data[current_model_id]
                 attrs = self.data_handler.parse_item(item)
                 
+                # 分离字段值和checkbox值
                 num_fields = len(self.field_configs)
-                field_values = values[:num_fields]
-                checkbox_values = values[num_fields:]
+                current_field_values = field_values_and_checkboxes[:num_fields]
+                current_checkbox_values = field_values_and_checkboxes[num_fields:]
                 
-                # 构建当前显示的原始值（和 load_data 相同的处理）
-                original_values = []
-                for field in self.field_configs:
-                    value = attrs.get(field['key'], '')
-                    original_values.append(self.field_processor.process_load(field, value))
-                
-                # 比较每个字段（处理 None 和空字符串的等价性）
-                for idx in range(num_fields):
-                    orig = original_values[idx] if original_values[idx] is not None else ''
-                    curr = field_values[idx] if field_values[idx] is not None else ''
-                    if str(orig) != str(curr):
+                # 对比每个字段
+                for i, field in enumerate(self.field_configs):
+                    # 对比字段值
+                    original_value = self.field_processor.process_load(field, attrs.get(field['key'], ''))
+                    current_value = current_field_values[i]
+                    
+                    # 字符串对比（去除首尾空格）
+                    if str(original_value).strip() != str(current_value).strip():
                         return True
-                
-                # 比较勾选框
-                checkbox_idx = 0
-                for field in self.field_configs:
-                    if field.get('has_checkbox'):
-                        original_chk = attrs.get(f"chk_{field['key']}", False)
-                        current_chk = checkbox_values[checkbox_idx]
-                        if original_chk != current_chk:
+                    
+                    # 对比checkbox值
+                    if field.get('has_checkbox') and i < len(current_checkbox_values):
+                        original_checkbox = attrs.get(f"chk_{field['key']}", False)
+                        current_checkbox = current_checkbox_values[i]
+                        if original_checkbox != current_checkbox:
                             return True
-                        checkbox_idx += 1
                 
                 return False
             
-            # 导航函数（带修改检测）
-            def navigate_with_check(index, model_id, direction, *values):
-                """导航前检查是否有修改"""
-                resolved_index, resolved_model = _resolve_model(index, model_id)
-                modified = check_modified(resolved_index, resolved_model, *values)
-                if modified:
-                    # 有修改，显示弹窗
-                    return [gr.update(value=resolved_index), gr.update(visible=True), gr.update(value=direction)] + [gr.update()] * len(outputs)
-                else:
-                    # 无修改，直接跳转并加载数据
-                    if direction == "next":
-                        new_index = min(len(self.visible_keys) - 1, resolved_index + 1)
+            # ========== 事件绑定 ==========
+            
+            # 构建 load_outputs（按照COMPONENTS配置顺序，跳过按钮）
+            load_outputs = []
+            for comp_config in self.components_config:
+                comp_id = comp_config['id']
+                comp_type = comp_config['type']
+                
+                # 跳过按钮组件
+                if comp_type == 'button':
+                    continue
+                
+                comp = components.get(comp_id)
+                if comp:
+                    # 如果是元组（textbox + checkbox），展开添加
+                    if isinstance(comp, tuple):
+                        load_outputs.extend(comp)
                     else:
-                        new_index = max(0, resolved_index - 1)
-                    
-                    load_result = load_data(new_index)
-                    return [gr.update(value=new_index), gr.update(visible=False), gr.update()] + load_result
+                        load_outputs.append(comp)
             
-            # 保存并继续
-            def save_and_nav(index, model_id, direction, *values):
-                """保存当前数据并跳转"""
-                # 先保存
-                _ = save_data(index, model_id, *values)
-                
-                # 再跳转并加载数据
-                resolved_index, _ = _resolve_model(index, model_id)
-                if direction == "next":
-                    new_index = min(len(self.visible_keys) - 1, resolved_index + 1)
-                else:
-                    new_index = max(0, resolved_index - 1)
-                
-                load_result = load_data(new_index)
-                return [gr.update(value=new_index), gr.update(visible=False)] + load_result
+            # 添加 original_dimensions state
+            load_outputs.append(original_dimensions)
             
-            # 放弃更改并继续
-            def skip_and_nav(index, model_id, direction):
-                """放弃更改并跳转"""
-                resolved_index, _ = _resolve_model(index, model_id)
-                if direction == "next":
-                    new_index = min(len(self.visible_keys) - 1, resolved_index + 1)
-                else:
-                    new_index = max(0, resolved_index - 1)
-                
-                load_result = load_data(new_index)
-                return [gr.update(value=new_index), gr.update(visible=False)] + load_result
+            demo.load(fn=load_data, inputs=[current_index], outputs=load_outputs)
             
-            # 绑定事件
-            status_outputs = [status_box] if status_box else []
-            outputs = [gif_display, model_id_display] + field_components + checkbox_components + status_outputs + [progress, original_dimensions, scale_slider]
+            # model_id 变化时自动加载数据
+            def on_model_id_change(model_id_value):
+                """model_id 变化时加载对应的数据"""
+                if not model_id_value or model_id_value not in self.visible_keys:
+                    return load_data(0)
+                new_index = self.visible_keys.index(model_id_value)
+                return [new_index] + load_data(new_index)
             
-            # 找到dimensions字段的索引
+            model_id_change_outputs = [current_index] + load_outputs
+            model_id_display.change(
+                fn=on_model_id_change,
+                inputs=[model_id_display],
+                outputs=model_id_change_outputs
+            )
+            
+            # 滑块变化时更新dimensions
             dimensions_idx = None
-            for idx, field in enumerate(self.field_configs):
+            for i, field in enumerate(self.field_configs):
                 if field['key'] == 'dimensions':
-                    dimensions_idx = idx
+                    dimensions_idx = i
                     break
             
-            # 绑定尺度滑块事件（如果找到dimensions字段）
-            if dimensions_idx is not None and scale_slider is not None:
+            if dimensions_idx is not None and scale_slider:
                 scale_slider.change(
                     fn=scale_dimensions,
                     inputs=[original_dimensions, scale_slider],
                     outputs=[field_components[dimensions_idx]]
                 )
             
-            # 初始加载
-            demo.load(lambda: load_data(0), outputs=outputs)
+            # 搜索功能（按回车触发）- model_id既显示也可搜索
+            if model_id_display:
+                search_outputs = [current_index] + load_outputs
+                model_id_display.submit(
+                    fn=search_and_load,
+                    inputs=[model_id_display],
+                    outputs=search_outputs
+                )
             
-            # 保存按钮
-            save_btn.click(
-                save_data,
-                inputs=[current_index, model_id_display] + field_components + checkbox_components,
-                outputs=outputs
-            )
+            # 保存
+            save_inputs = [current_index, model_id_display] + field_components + checkbox_components
+            save_btn.click(fn=save_data, inputs=save_inputs, outputs=load_outputs)
             
-            # 导航按钮（带修改检测）
+            # 导航检查和跳转
+            def check_and_nav(nav_func, direction_value):
+                """导航检查：对比当前值与数据库值，如果有差异显示弹窗，否则直接跳转"""
+                def wrapper(index, model_id, *field_values_and_checkboxes):
+                    # 检查是否有真实的修改（对比数据库值）
+                    if has_real_changes(index, model_id, *field_values_and_checkboxes):
+                        # 有修改，显示弹窗，记录方向
+                        return gr.update(), gr.update(visible=True), gr.update(value=direction_value)
+                    else:
+                        # 无修改，直接跳转
+                        new_model_id = nav_func(index, model_id)
+                        return gr.update(value=new_model_id), gr.update(visible=False), gr.update()
+                return wrapper
+            
+            # 上一个/下一个按钮
+            nav_inputs = [current_index, model_id_display] + field_components + checkbox_components
+            nav_outputs = [model_id_display, confirm_modal, nav_direction]
+            
             prev_btn.click(
-                navigate_with_check,
-                inputs=[current_index, model_id_display, gr.State("prev")] + field_components + checkbox_components,
-                outputs=[current_index, confirm_modal, nav_direction] + outputs
+                fn=check_and_nav(go_prev, "prev"),
+                inputs=nav_inputs,
+                outputs=nav_outputs
+            )
+            next_btn.click(
+                fn=check_and_nav(go_next, "next"),
+                inputs=nav_inputs,
+                outputs=nav_outputs
             )
             
-            next_btn.click(
-                navigate_with_check,
-                inputs=[current_index, model_id_display, gr.State("next")] + field_components + checkbox_components,
-                outputs=[current_index, confirm_modal, nav_direction] + outputs
-            )
+            # 导出
+            if export_btn:
+                def export_to_jsonl():
+                    try:
+                        # 统一导出到 exports 目录
+                        filepath = self.data_handler.export_to_jsonl(output_dir="exports")
+                        filename = os.path.basename(filepath)
+                        return gr.update(value=f"✅ 导出成功: {filename}", visible=True)
+                    except Exception as e:
+                        return gr.update(value=f"❌ 导出失败: {e}", visible=True)
+                
+                export_btn.click(fn=export_to_jsonl, outputs=[export_status])
             
             # 确认弹窗按钮
+            def save_and_continue_nav(index, model_id, direction, *field_values_and_checkboxes):
+                """保存并继续"""
+                # 先保存
+                save_data(index, model_id, *field_values_and_checkboxes)
+                # 再跳转
+                if direction == "prev":
+                    new_model_id = go_prev(index, model_id)
+                else:
+                    new_model_id = go_next(index, model_id)
+                return gr.update(value=new_model_id), gr.update(visible=False)
+            
+            def skip_and_continue_nav(index, model_id, direction):
+                """放弃修改并继续"""
+                if direction == "prev":
+                    new_model_id = go_prev(index, model_id)
+                else:
+                    new_model_id = go_next(index, model_id)
+                return gr.update(value=new_model_id), gr.update(visible=False)
+            
+            save_and_continue_inputs = [current_index, model_id_display, nav_direction] + field_components + checkbox_components
             save_and_continue.click(
-                save_and_nav,
-                inputs=[current_index, model_id_display, nav_direction] + field_components + checkbox_components,
-                outputs=[current_index, confirm_modal] + outputs
+                fn=save_and_continue_nav,
+                inputs=save_and_continue_inputs,
+                outputs=[model_id_display, confirm_modal]
             )
             
             skip_changes.click(
-                skip_and_nav,
+                fn=skip_and_continue_nav,
                 inputs=[current_index, model_id_display, nav_direction],
-                outputs=[current_index, confirm_modal] + outputs
+                outputs=[model_id_display, confirm_modal]
             )
             
-            cancel_nav.click(
-                lambda: gr.update(visible=False),
-                outputs=[confirm_modal]
-            )
-            
-            # 导出按钮事件（仅在正常模式下）
-            if not self.debug and self.data_source == 'database':
-                def export_data():
-                    """导出数据库数据为JSONL文件"""
-                    try:
-                        if hasattr(self.data_handler, 'export_to_jsonl'):
-                            filepath = self.data_handler.export_to_jsonl()
-                            filename = os.path.basename(filepath)
-                            return gr.update(value=f"✅ 导出成功: {filename}", visible=True)
-                        else:
-                            return gr.update(value="❌ 导出功能不可用（当前数据源不支持）", visible=True)
-                    except Exception as e:
-                        return gr.update(value=f"❌ 导出失败: {str(e)}", visible=True)
-                
-                export_btn.click(
-                    export_data,
-                    inputs=[],
-                    outputs=[export_status]
-                )
+            cancel_nav.click(fn=lambda: gr.update(visible=False), outputs=[confirm_modal])
         
         return demo
     

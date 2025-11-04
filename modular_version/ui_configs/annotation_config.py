@@ -1,73 +1,203 @@
 """
-物体属性标注任务配置（参考旧版本config.py）
+物体属性标注任务配置
+简化版：消除冗余，配置更清晰
 """
 
-# 任务信息
+# ============ 任务信息 ============
 TASK_INFO = {
     "task_id": "annotation",
     "task_name": "物体属性标注",
     "description": "标注物体的基本属性信息"
 }
 
-# 字段配置（从旧版config.py迁移）
-FIELD_CONFIG = [
+# ============ 组件配置 ============
+# 设计原则：
+# - id 使用数据字段名（简洁、语义明确）
+# - type 描述组件类型（image, textbox, html 等）
+# - id 默认等于 data_field（消除冗余）
+COMPONENTS = [
+    # 图片显示
     {
-        "key": "category",
-        "label": "Category (类别)",
+        "id": "image_url",           # 直接用数据字段名
+        "type": "image",             # type说明这是图片组件
+        "label": "GIF预览",
+        "interactive": False
+    },
+    
+    # 搜索和当前ID合并框
+    {
+        "id": "model_id",
+        "type": "search",
+        "label": "🔍 Model ID（可搜索）",
+        "placeholder": "显示当前ID，可输入其他ID按回车搜索",
+        "lines": 1,
+        "searchable": True,          # 既显示又可搜索
+        "search_field": "model_id"
+    },
+    
+    # 状态显示（HTML组件用于显示富文本/样式）
+    {
+        "id": "annotation_status",
+        "type": "html",
+        "value": "",
+        "data_field": "_computed_status"  # 特殊标记：动态计算
+    },
+    
+    # 属性字段（data_field 默认使用 id）
+    {
+        "id": "category",
         "type": "textbox",
+        "label": "Category (类别)",
         "lines": 1,
         "has_checkbox": True,
-        "placeholder": "",
-        "flex": 1,
+        "checkbox_label": "✗",
         "process": None
+        # data_field 默认为 "category"
     },
     {
-        "key": "description",
-        "label": "Description (描述)",
+        "id": "description",
         "type": "textbox",
+        "label": "Description (描述)",
         "lines": 3,
         "has_checkbox": True,
-        "placeholder": "",
-        "flex": 2
+        "checkbox_label": "✗"
+        # data_field 默认为 "description"
     },
     {
-        "key": "material",
+        "id": "material",
+        "type": "textbox",
         "label": "Material (材质)",
-        "type": "textbox",
         "lines": 1,
         "has_checkbox": True,
-        "placeholder": "",
-        "flex": 1
+        "checkbox_label": "✗"
+        # data_field 默认为 "material"
     },
     {
-        "key": "dimensions",
+        "id": "dimensions",
+        "type": "textbox",
         "label": "Dimensions (尺寸)",
-        "type": "textbox",
         "lines": 1,
         "has_checkbox": True,
-        "placeholder": "例如: Small, Medium, Large",
-        "flex": 1,
-        "process": None
+        "checkbox_label": "✗",
+        "placeholder": "例如: 0.6 * 0.4 * 0.02",
+        "process": None,
+        "data_field": "dimensions"  # 明确指定（用于尺度滑块）
+    },
+    # 尺度滑块（紧跟在dimensions下方）
+    {
+        "id": "scale_slider",
+        "type": "slider",
+        "label": "🔧 尺度调整",
+        "minimum": 0.01,
+        "maximum": 2.0,
+        "value": 1.0,
+        "step": 0.01,
+        "target_field": "dimensions"  # 关联到dimensions字段
     },
     {
-        "key": "placement",
-        "label": "Placement (放置位置)",
+        "id": "placement",
         "type": "textbox",
+        "label": "Placement (放置位置)",
         "lines": 1,
         "has_checkbox": True,
+        "checkbox_label": "✗",
         "placeholder": "例如: OnTable, OnFloor",
-        "flex": 1,
         "process": "array_to_string"
+        # data_field 默认为 "placement"
+    },
+    
+    # 进度显示
+    {
+        "id": "progress_box",
+        "type": "textbox",
+        "label": "进度",
+        "lines": 1
+    },
+    
+    # 按钮
+    {
+        "id": "prev_btn",
+        "type": "button",
+        "label": "⬅️ 上一个",
+        "variant": "secondary"
+    },
+    {
+        "id": "next_btn",
+        "type": "button",
+        "label": "下一个 ➡️",
+        "variant": "secondary"
+    },
+    {
+        "id": "save_btn",
+        "type": "button",
+        "label": "💾 保存",
+        "variant": "primary"
     }
 ]
 
-# UI配置（从旧版config.py迁移）
+# ============ 布局配置 ============
+# 布局定义：搜索栏在顶部，下面是两栏布局（GIF + 字段）
+LAYOUT_CONFIG = {
+    "type": "tree",
+    "children": [
+        # 顶部：搜索+ID 和 状态横向布局
+        {
+            "type": "hstack",
+            "elem_id": "top_row",
+            "children": ["model_id", "annotation_status"]
+        },
+        
+        # 中间：两栏布局
+        {
+            "type": "hstack",
+            "elem_id": "main_content_row",
+            "children": [
+                # 左栏：GIF预览
+                {
+                    "type": "vstack",
+                    "elem_id": "left_column",
+                    "children": ["image_url"]
+                },
+                
+                # 右栏：字段
+                {
+                    "type": "vstack",
+                    "elem_id": "right_column",
+                    "children": [
+                        # 属性字段（scale_slider跟随dimensions，不需要单独列出）
+                        "category",
+                        "description",
+                        "material",
+                        {
+                            "type": "vstack",
+                            "elem_id": "dimensions_block",
+                            "children": [
+                                "dimensions",
+                                "scale_slider"  # 尺度滑块紧跟dimensions
+                            ]
+                        },
+                        "placement",
+                        
+                        # 进度
+                        "progress_box"
+                    ]
+                }
+            ]
+        },
+        
+        # 操作按钮（单独一行，在两栏布局下方）
+        {
+            "type": "hstack",
+            "elem_id": "button_row",
+            "children": ["prev_btn", "save_btn", "next_btn"]
+        }
+    ]
+}
+
+# ============ UI配置 ============
 UI_CONFIG = {
     "title": "物体属性检查工具",
-    "gif_height": None,
-    "info_column_height": None,
     "enable_checkboxes": True,
-    "checkbox_label": "✗",
     "show_user_info": True,
     "show_status": True,
 }
@@ -90,35 +220,35 @@ CUSTOM_CSS = """
     width: 100% !important;
 }
 
-/* 搜索行：模型检索和状态框高度对齐 */
-#search_row {
+/* 顶部行：model_id & 状态 */
+#top_row {
     display: flex !important;
     align-items: stretch !important;
     width: 100% !important;
+    gap: 12px !important;
 }
-#search_row .gradio-column {
+#top_row > .gradio-column {
     display: flex !important;
     align-items: stretch !important;
 }
-#search_row .gradio-textbox {
+#top_row .gradio-textbox,
+#top_row .gradio-html {
     display: flex !important;
     flex-direction: column !important;
+    width: 100% !important;
 }
-#search_row .gradio-html {
+#top_row .gradio-html > div {
     flex: 1 !important;
     display: flex !important;
-    flex-direction: column !important;
-}
-#search_row .gradio-html > div {
-    flex: 1 !important;
-    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
 }
 
-/* 主内容行：左右列根据内容自适应高度 */
+/* 主内容行：左右列等高 */
 #main_content_row {
     display: flex !important;
-    align-items: flex-start !important;
-    gap: 12px !important;
+    align-items: stretch !important;
+    gap: 16px !important;
     width: 100% !important;
 }
 #main_content_row > .gradio-column {
@@ -127,58 +257,107 @@ CUSTOM_CSS = """
     min-width: 0 !important;
 }
 
-/* GIF容器：保持1:1比例，自适应宽度（横向更宽） */
-#gif_container {
-    aspect-ratio: 1 / 1 !important;
-    width: 100% !important;
+/* 左侧列：GIF */
+#left_column {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 0 !important;
+    min-width: 320px !important;
 }
-#gif_box, #gif_container .gradio-image {
-    aspect-ratio: 1 / 1 !important;
+
+/* GIF容器：固定高度，图片居中 */
+#image_url {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-height: 600px !important;
+}
+#image_url .gradio-image {
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 12px;
+}
+#image_url .gradio-image > div {
+    width: 100% !important;
+    height: 100% !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
 }
-#gif_box img, #gif_container .gradio-image img {
-    max-width: 100% !important;
+#image_url .gradio-image > div > img {
     max-height: 100% !important;
+    max-width: 100% !important;
     width: auto !important;
     height: auto !important;
     object-fit: contain !important;
-    margin: auto !important;
+    display: block !important;
 }
 
 /* 右侧信息列：自动填充空间 */
-#info_column {
+#right_column {
     display: flex !important;
     flex-direction: column !important;
-    gap: 4px !important;
+    gap: 8px !important;
 }
-#info_column > .gradio-column {
-    display: flex !important;
-    flex-direction: column !important;
-    width: 100% !important;
-}
-#info_column > .gradio-row:last-child {
-    margin-top: 8px !important;
-}
-#info_column .gradio-checkbox {
-    margin-bottom: 0px !important;
-}
-#info_column .gradio-textbox {
-    flex: 1 1 0 !important;
-    min-height: 0 !important;
+#right_column > .gradio-column {
     display: flex !important;
     flex-direction: column !important;
     width: 100% !important;
+    gap: 0px !important;
 }
-#info_column .gradio-textbox textarea {
-    flex: 1 !important;
-    min-height: 0 !important;
+#right_column > .gradio-row:last-child {
+    margin-top: 12px !important;
+}
+#right_column .gradio-textbox {
+    width: 100% !important;
+}
+#right_column .gradio-textbox textarea {
+    width: 100% !important;
 }
 
-/* 让description输入框占据2倍空间 */
-#info_column > div:nth-child(2) {
-    flex: 2 1 0 !important;
+/* 字段标签与复选框视觉对齐 */
+#right_column div[id$="_checkbox"] {
+    margin-bottom: 4px !important;
+}
+#right_column div[id$="_checkbox"] .gradio-checkbox {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    margin: 0 !important;
+}
+#right_column label {
+    white-space: nowrap !important;
+}
+
+/* 尺寸与尺度组合块 */
+#dimensions_block {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    padding: 12px 14px !important;
+    background: rgba(0, 0, 0, 0.02);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+}
+#dimensions_block > .gradio-column,
+#dimensions_block > .gradio-row {
+    width: 100% !important;
+}
+#dimensions_block #dimensions {
+    margin-bottom: 0 !important;
+}
+#dimensions_block #scale_slider {
+    width: 100% !important;
+}
+#dimensions_block .gradio-slider {
+    width: 100% !important;
+}
+#dimensions_checkbox {
+    display: none !important;
 }
 
 /* 确认弹窗样式 */
@@ -223,6 +402,20 @@ CUSTOM_CSS = """
     padding: 12px 20px !important;
     border-radius: 8px !important;
     line-height: 1.2 !important;
+}
+
+/* 操作按钮行：单独一行，在主内容下方，水平居中 */
+#button_row {
+    display: flex !important;
+    justify-content: center !important;
+    gap: 12px !important;
+    flex-wrap: nowrap !important;
+    margin-top: 16px !important;
+    width: 100% !important;
+}
+#button_row .gradio-button {
+    flex: 0 1 auto !important;
+    min-width: 120px !important;
 }
 
 @keyframes fadeIn {
