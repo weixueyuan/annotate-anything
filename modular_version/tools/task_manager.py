@@ -17,7 +17,7 @@ sys.path.insert(0, str(project_root))
 
 def list_tasks():
     """列出所有已配置的任务"""
-    from routes import ROUTES
+    from src.routes import ROUTES
     
     print("\n📋 已配置的任务:")
     print("=" * 80)
@@ -27,7 +27,7 @@ def list_tasks():
         
         # 检查文件是否存在
         db_exists = os.path.exists(f"{project_root}/databases/{task_name}.db")
-        config_exists = os.path.exists(f"{project_root}/ui_configs/{task_name}_config.py")
+        config_exists = os.path.exists(f"{project_root}/src/ui_configs/{task_name}_config.py")
         
         status = "✅" if (db_exists and config_exists) else "⚠️ "
         
@@ -35,7 +35,7 @@ def list_tasks():
         print(f"   描述: {route['description']}")
         print(f"   端口: {route['port']}")
         print(f"   数据库: {'✅' if db_exists else '❌'} databases/{task_name}.db")
-        print(f"   配置: {'✅' if config_exists else '❌'} ui_configs/{task_name}_config.py")
+        print(f"   配置: {'✅' if config_exists else '❌'} src/ui_configs/{task_name}_config.py")
     
     print("\n" + "=" * 80)
 
@@ -46,15 +46,15 @@ def create_task(task_name, description, port, base_task="annotation"):
     print("=" * 80)
     
     # 1. 检查是否已存在
-    from routes import ROUTES
+    from src.routes import ROUTES
     for route in ROUTES:
         if route['task'] == task_name:
             print(f"❌ 任务 '{task_name}' 已存在！")
             return False
     
     # 2. 创建UI配置文件
-    base_config = f"{project_root}/ui_configs/{base_task}_config.py"
-    new_config = f"{project_root}/ui_configs/{task_name}_config.py"
+    base_config = f"{project_root}/src/ui_configs/{base_task}_config.py"
+    new_config = f"{project_root}/src/ui_configs/{task_name}_config.py"
     
     if not os.path.exists(base_config):
         print(f"❌ 基础配置文件不存在: {base_config}")
@@ -80,10 +80,10 @@ def create_task(task_name, description, port, base_task="annotation"):
     with open(new_config, 'w', encoding='utf-8') as f:
         f.write(content)
     
-    print(f"✅ 创建配置: ui_configs/{task_name}_config.py")
+    print(f"✅ 创建配置: src/ui_configs/{task_name}_config.py")
     
     # 3. 添加到routes.py
-    routes_file = f"{project_root}/routes.py"
+    routes_file = f"{project_root}/src/routes.py"
     with open(routes_file, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     

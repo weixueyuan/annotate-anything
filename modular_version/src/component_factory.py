@@ -64,10 +64,11 @@ class ComponentFactory:
     
     def _create_image(self, config: Dict) -> gr.Image:
         """创建图片组件"""
+        # 修复图片label显示问题，确保label始终取自配置
         return gr.Image(
-            label=config.get("label", ""),
+            label=str(config.get("label", "")),
             type="filepath",
-            interactive=config.get("interactive", False),
+            interactive=bool(config.get("interactive", False)),
             elem_id=config.get("id")
         )
     
@@ -76,7 +77,16 @@ class ComponentFactory:
         创建文本框组件
         
         如果 has_checkbox=True，则返回 (textbox, checkbox) 元组
+        
+        支持的配置参数:
+        - label: 标签文本
+        - placeholder: 占位符文本
+        - lines: 文本行数
+        - interactive: 是否可交互编辑(默认为True)
+        - has_checkbox: 是否添加错误检查复选框
         """
+        # 获取交互状态（默认为可编辑）
+        
         # 如果需要checkbox，先创建checkbox（在textbox上方）
         if config.get("has_checkbox", False):
             # 组合checkbox标签：checkbox_label + 字段label
@@ -90,12 +100,12 @@ class ComponentFactory:
             # 存储checkbox引用
             self.checkboxes[config.get("id")] = checkbox
             
-            # 创建textbox（无label）
+            # 创建textbox（显示原始标签以避免标签丢失）
             textbox = gr.Textbox(
                 label="",
                 placeholder=config.get("placeholder", ""),
                 lines=config.get("lines", 1),
-                show_label=False,
+                interactive=bool(config.get("interactive", True)),
                 elem_id=config.get("id")
             )
             
@@ -106,6 +116,7 @@ class ComponentFactory:
             label=config.get("label", ""),
             placeholder=config.get("placeholder", ""),
             lines=config.get("lines", 1),
+            interactive=bool(config.get("interactive", True)),
             elem_id=config.get("id")
         )
         
@@ -126,7 +137,7 @@ class ComponentFactory:
             label=config.get("label", ""),
             placeholder=config.get("placeholder", "输入后按回车搜索" if searchable else ""),
             lines=config.get("lines", 1),
-            interactive=interactive,
+            interactive=bool(interactive),
             elem_id=config.get("id")
         )
     

@@ -20,20 +20,22 @@ from src.db_handler import DatabaseHandler
 from src.jsonl_handler import JSONLHandler
 from src.field_processor import FieldProcessor
 from src.component_factory import ComponentFactory
-from routes import ROUTES, DEFAULT_PORT
+from src.routes import ROUTES, DEFAULT_PORT
 
 
 class TaskManager:
     """任务管理器"""
     
-    def __init__(self, task_config, user_uid="default_user", debug=False):
+    def __init__(self, task_config, user_uid="default_user", debug=False, export_dir="exports", default_allowed_path="/mnt"):
         self.task_config = task_config
         self.user_uid = user_uid
         self.task_name = task_config['task']
         self.debug = debug
+        self.export_dir = export_dir  # 添加导出目录配置，解决硬编码问题
+        self.default_allowed_path = default_allowed_path  # 添加默认允许路径，解决硬编码问题
         
         # 加载UI配置（新架构）
-        config_module = importlib.import_module(f"ui_configs.{self.task_name}_config")
+        config_module = importlib.import_module(f"src.ui_configs.{self.task_name}_config")
         
         self.components_config = config_module.COMPONENTS
         self.layout_config = config_module.LAYOUT_CONFIG
@@ -44,13 +46,14 @@ class TaskManager:
         # 从COMPONENTS中提取字段配置（用于数据处理）
         self.field_configs = []
         for comp in self.components_config:
-            if comp.get('has_checkbox'):  # 如果有checkbox，说明是字段
+            if comp.get('has_checkbox') is not None:  # 只要定义了has_checkbox，就认为是字段
                 self.field_configs.append({
                     'key': comp['id'],
                     'label': comp['label'],
                     'type': comp['type'],
                     'lines': comp.get('lines', 1),
-                    'has_checkbox': True,
+                    'has_checkbox': comp.get('has_checkbox'),
+                    'interactive': comp.get('interactive', True),  # 默认可编辑
                     'placeholder': comp.get('placeholder', ''),
                     'process': comp.get('process')
                 })
@@ -132,7 +135,15 @@ class TaskManager:
             # State组件
             current_index = gr.State(value=0)
             nav_direction = gr.State(value="next")
-            original_dimensions = gr.State(value="")  # 存储原始dimensions值
+            
+            # 动态查找尺度滑块的目标字段
+            dimension_field_name = None
+            for comp_config in self.components_config:
+                if comp_config.get('type') == 'slider' and comp_config.get('target_field'):
+                    dimension_field_name = comp_config.get('target_field')
+                    break
+            
+            original_dimensions = gr.State(value="")  # 存储原始dimension/dimensions值
             
             # 使用布局配置构建界面（同时创建和渲染组件）
             factory.build_layout(self.components_config, self.layout_config)
@@ -206,23 +217,33 @@ class TaskManager:
                     return empty_result + [""]  # +1 for original_dimensions state
                 
                 model_id = self.visible_keys[index]
-                item = self.all_data[model_id]
+                
+                # 直接从all_data获取数据
+                item = self.all_data.get(model_id)
+                if not item:
+                    return empty_result + [""]
+                    
                 attrs = self.data_handler.parse_item(item)
                 
-                # 浏览即占有
+                # 浏览即占有 - 简单直接方式（不使用缓存）
                 current_uid = attrs.get('uid', '')
                 if not current_uid or current_uid == '':
-                    self.data_handler.assign_to_user(model_id, self.user_uid)
-                    print(f"🔒 占有数据: {model_id} -> {self.user_uid}")
-                    self.all_data = self.data_handler.load_data()
-                    self.visible_keys = []
-                    for key, value in self.all_data.items():
-                        item_attrs = self.data_handler.parse_item(value)
-                        item_uid = item_attrs.get('uid', '')
-                        if not item_uid or item_uid == self.user_uid:
-                            self.visible_keys.append(key)
-                    item = self.all_data[model_id]
-                    attrs = self.data_handler.parse_item(item)
+                    # 数据未分配，立即占有（只设置uid，不触碰其他数据）
+                    if hasattr(self.data_handler, "assign_to_user"):
+                        self.data_handler.assign_to_user(model_id, self.user_uid)
+                        print(f"🔒 占有数据: {model_id} -> {self.user_uid}")
+                        # 重新加载全部数据（简单直接）
+                        self.all_data = self.data_handler.load_data()
+                        # 重新计算可见数据
+                        self.visible_keys = []
+                        for key, value in self.all_data.items():
+                            item_attrs = self.data_handler.parse_item(value)
+                            item_uid = item_attrs.get('uid', '')
+                            if not item_uid or item_uid == self.user_uid:
+                                self.visible_keys.append(key)
+                        # 重新获取当前项
+                        item = self.all_data.get(model_id)
+                        attrs = self.data_handler.parse_item(item)
                 
                 # 根据配置动态构建返回值（跳过按钮）
                 result = []
@@ -275,9 +296,17 @@ class TaskManager:
                         checkbox_value = attrs.get(f"chk_{data_field}", False)
                         result.append(checkbox_value)
                         
-                        # 保存dimensions原始值（用于尺度滑块）
-                        if data_field == 'dimensions':
-                            original_dims_value = attrs.get('dimensions', '')
+                        # 保存dimension/dimensions原始值（用于尺度滑块）
+                        if dimension_field_name and data_field == dimension_field_name:
+                            original_dims_value = attrs.get(dimension_field_name, '')
+                    
+                    # 处理其他图片字段（part_annotation 有多个图片）
+                    elif comp_type == 'image' and data_field not in ['model_id', '_computed_status']:
+                        # 其他图片字段（如 image_url_p1, image_url_p2）
+                        img_path = attrs.get(data_field, None)
+                        if img_path and not os.path.exists(img_path):
+                            img_path = None
+                        result.append(img_path)
                 
                 # 添加 original_dimensions state
                 result.append(original_dims_value)
@@ -312,35 +341,81 @@ class TaskManager:
                 return resolved_index, resolved_model
             
             def save_data(index, model_id, *values):
-                resolved_index, resolved_model = _resolve_model(index, model_id)
-                if resolved_model is None:
-                    return load_data(resolved_index)
-                
-                num_fields = len(self.field_configs)
-                field_values = values[:num_fields]
-                checkbox_values = values[num_fields:]
-                
-                attributes = {}
-                has_error = False  # 追踪是否有任何checkbox被选中
-                
-                for i, field in enumerate(self.field_configs):
-                    key = field['key']
-                    value = field_values[i]
-                    attributes[key] = self.field_processor.process_save(field, value)
-                    if field.get('has_checkbox') and i < len(checkbox_values):
-                        chk_value = checkbox_values[i]
-                        attributes[f"chk_{key}"] = chk_value
-                        if chk_value:  # 如果任何checkbox被选中，标记为有错误
-                            has_error = True
-                
-                # 计算score：如果任意一个checkbox被选中，score=0；否则score=1
-                score = 0 if has_error else 1
-                
-                self.data_handler.save_item(resolved_model, attributes, score=score, uid=self.user_uid)
-                print(f"✅ 保存: {resolved_model}, score={score}, uid={self.user_uid}")
-                
-                self.all_data = self.data_handler.load_data()
-                return load_data(resolved_index)
+               resolved_index, resolved_model = _resolve_model(index, model_id)
+               if resolved_model is None:
+                   return load_data(resolved_index)
+               
+               num_fields = len(self.field_configs)
+               field_values = values[:num_fields]
+               checkbox_values = values[num_fields:]
+               
+               attributes = {}
+               has_error = False  # 追踪是否有任何checkbox被选中
+               
+               for i, field in enumerate(self.field_configs):
+                   key = field['key']
+                   value = field_values[i]
+                   attributes[key] = self.field_processor.process_save(field, value)
+                   if field.get('has_checkbox') and i < len(checkbox_values):
+                       chk_value = checkbox_values[i]
+                       attributes[f"chk_{key}"] = chk_value
+                       if chk_value:  # 如果任何checkbox被选中，标记为有错误
+                           has_error = True
+               
+               # 计算score：如果任意一个checkbox被选中，score=0；否则score=1
+               score = 0 if has_error else 1
+               
+               # 直接使用data_handler保存（不使用缓存）
+               result = self.data_handler.save_item(
+                   resolved_model,
+                   attributes,
+                   score=score,
+                   uid=self.user_uid
+               )
+               
+               # 检查保存结果
+               if isinstance(result, dict) and not result.get("success", True):
+                   # 保存失败，提供详细错误信息
+                   error_type = result.get("error", "UNKNOWN_ERROR")
+                   error_msg = result.get("message", "未知错误")
+                   print(f"❌ 保存失败 ({error_type}): {error_msg}")
+                   
+                   # 构建错误状态HTML
+                   error_status_html = f'''<div style="
+                       background-color: #f8d7da;
+                       border: 2px solid #f5c6cb;
+                       padding: 8px;
+                       font-size: 14px;
+                       text-align: center;
+                       font-weight: 600;
+                       border-radius: 6px;
+                       color: #721c24;
+                   ">❌ 保存失败: {error_msg}</div>'''
+                   
+                   # 返回当前数据并显示错误信息
+                   result = load_data(resolved_index)
+                   # 如果状态框在加载的组件中，则替换状态框内容
+                   for i, comp in enumerate(self.components_config):
+                       if comp.get('data_field') == '_computed_status':
+                           result[i] = error_status_html
+                   
+                   return result
+               else:
+                   # 保存成功
+                   print(f"✅ 保存: {resolved_model}, score={score}, uid={self.user_uid}")
+                   
+                   # 重新加载数据（简单直接）
+                   self.all_data = self.data_handler.load_data()
+                   
+                   # 重新计算可见键
+                   self.visible_keys = []
+                   for key, value in self.all_data.items():
+                       attrs = self.data_handler.parse_item(value)
+                       item_uid = attrs.get('uid', '')
+                       if not item_uid or item_uid == self.user_uid:
+                           self.visible_keys.append(key)
+                   
+                   return load_data(resolved_index)
             
             def go_prev(index, model_id):
                 """上一个：只返回新的 model_id"""
@@ -389,7 +464,13 @@ class TaskManager:
                     return False
                 
                 # 获取数据库中的原始数据
-                current_model_id = self.visible_keys[index]
+                if model_id and model_id in self.all_data:
+                    current_model_id = model_id
+                elif index < len(self.visible_keys):
+                    current_model_id = self.visible_keys[index]
+                else:
+                    return False
+                
                 if current_model_id not in self.all_data:
                     return False
                 
@@ -398,25 +479,40 @@ class TaskManager:
                 
                 # 分离字段值和checkbox值
                 num_fields = len(self.field_configs)
-                current_field_values = field_values_and_checkboxes[:num_fields]
-                current_checkbox_values = field_values_and_checkboxes[num_fields:]
+                current_field_values = list(field_values_and_checkboxes[:num_fields])
+                current_checkbox_values = list(field_values_and_checkboxes[num_fields:])
                 
+                checkbox_idx = 0
                 # 对比每个字段
                 for i, field in enumerate(self.field_configs):
+                    if i >= len(current_field_values):
+                        continue  # 防止索引越界
+                    
                     # 对比字段值
-                    original_value = self.field_processor.process_load(field, attrs.get(field['key'], ''))
+                    key = field['key']
+                    original_value = attrs.get(key, '')
+                    # 使用processor处理原始值，确保与UI显示格式一致
+                    processed_value = self.field_processor.process_load(field, original_value)
+                    if processed_value is None:
+                        processed_value = ""
+                        
                     current_value = current_field_values[i]
+                    if current_value is None:
+                        current_value = ""
                     
                     # 字符串对比（去除首尾空格）
-                    if str(original_value).strip() != str(current_value).strip():
+                    if str(processed_value).strip() != str(current_value).strip():
+                        print(f"字段 '{key}' 已修改: '{processed_value}' -> '{current_value}'")
                         return True
                     
                     # 对比checkbox值
-                    if field.get('has_checkbox') and i < len(current_checkbox_values):
-                        original_checkbox = attrs.get(f"chk_{field['key']}", False)
-                        current_checkbox = current_checkbox_values[i]
+                    if field.get('has_checkbox') and checkbox_idx < len(current_checkbox_values):
+                        original_checkbox = attrs.get(f"chk_{key}", False)
+                        current_checkbox = current_checkbox_values[checkbox_idx]
                         if original_checkbox != current_checkbox:
+                            print(f"复选框 '{key}' 已修改: {original_checkbox} -> {current_checkbox}")
                             return True
+                        checkbox_idx += 1
                 
                 return False
             
@@ -460,12 +556,13 @@ class TaskManager:
                 outputs=model_id_change_outputs
             )
             
-            # 滑块变化时更新dimensions
+            # 滑块变化时更新dimension/dimensions字段
             dimensions_idx = None
-            for i, field in enumerate(self.field_configs):
-                if field['key'] == 'dimensions':
-                    dimensions_idx = i
-                    break
+            if dimension_field_name:
+                for i, field in enumerate(self.field_configs):
+                    if field['key'] == dimension_field_name:
+                        dimensions_idx = i
+                        break
             
             if dimensions_idx is not None and scale_slider:
                 scale_slider.change(
@@ -520,12 +617,23 @@ class TaskManager:
             if export_btn:
                 def export_to_jsonl():
                     try:
-                        # 统一导出到 exports 目录
-                        filepath = self.data_handler.export_to_jsonl(output_dir="exports")
+                        # 使用TaskManager中配置的导出目录
+                        filepath = self.data_handler.export_to_jsonl(output_dir=self.export_dir)
                         filename = os.path.basename(filepath)
                         return gr.update(value=f"✅ 导出成功: {filename}", visible=True)
+                    except PermissionError:
+                        error_msg = f"导出失败: 没有写入权限，请检查目录 '{self.export_dir}' 的访问权限"
+                        print(f"❌ {error_msg}")
+                        return gr.update(value=f"❌ {error_msg}", visible=True)
+                    except OSError as e:
+                        error_msg = f"导出失败: 文件系统错误 - {str(e)}"
+                        print(f"❌ {error_msg}")
+                        return gr.update(value=f"❌ {error_msg}", visible=True)
                     except Exception as e:
-                        return gr.update(value=f"❌ 导出失败: {e}", visible=True)
+                        # 记录详细错误信息
+                        error_msg = str(e)
+                        print(f"❌ 导出错误详情: {error_msg}")
+                        return gr.update(value=f"❌ 导出失败: {error_msg}", visible=True)
                 
                 export_btn.click(fn=export_to_jsonl, outputs=[export_status])
             
@@ -533,12 +641,25 @@ class TaskManager:
             def save_and_continue_nav(index, model_id, direction, *field_values_and_checkboxes):
                 """保存并继续"""
                 # 先保存
-                save_data(index, model_id, *field_values_and_checkboxes)
-                # 再跳转
+                save_result = save_data(index, model_id, *field_values_and_checkboxes)
+                
+                # 检查是否包含错误状态（通过查找HTML中的错误标记）
+                has_error = False
+                for item in save_result:
+                    if isinstance(item, str) and "❌ 保存失败" in item:
+                        has_error = True
+                        break
+                
+                # 如果有错误，保持弹窗可见，不进行导航
+                if has_error:
+                    return gr.update(value=model_id), gr.update(visible=True)
+                
+                # 无错误，执行导航
                 if direction == "prev":
                     new_model_id = go_prev(index, model_id)
                 else:
                     new_model_id = go_next(index, model_id)
+                
                 return gr.update(value=new_model_id), gr.update(visible=False)
             
             def skip_and_continue_nav(index, model_id, direction):
@@ -547,6 +668,7 @@ class TaskManager:
                     new_model_id = go_prev(index, model_id)
                 else:
                     new_model_id = go_next(index, model_id)
+                
                 return gr.update(value=new_model_id), gr.update(visible=False)
             
             save_and_continue_inputs = [current_index, model_id_display, nav_direction] + field_components + checkbox_components
@@ -604,17 +726,25 @@ class TaskManager:
     def _render_user_info(self, visible, others):
         return f'<div style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:12px;border-radius:8px;text-align:center;">👤 用户：{self.user_uid} | 📊 可见：{visible} | 🔒 其他：{others}</div>'
     
+    def _refresh_visible_keys(self):
+        """重新计算用户可见的数据键列表"""
+        # 重新计算可见键（不使用缓存，直接从all_data计算）
+        self.visible_keys = []
+        for key, value in self.all_data.items():
+            attrs = self.data_handler.parse_item(value)
+            item_uid = attrs.get('uid', '')
+            if not item_uid or item_uid == self.user_uid:
+                self.visible_keys.append(key)
+    
     def get_allowed_paths(self):
         """
         从数据库数据中提取允许访问的基础路径（用于Gradio的allowed_paths）
         
         从image_url字段中提取第一个路径段，适配不同项目的路径结构
         """
-        # 默认路径（如果数据库为空）
-        default_path = "/mnt"
-        
+        # 如果数据库为空，使用配置的默认路径
         if not self.all_data:
-            return [default_path]
+            return [self.default_allowed_path]
         
         # 从第一个数据项的image_url中提取基础路径
         first_item = list(self.all_data.values())[0]
@@ -632,11 +762,21 @@ class TaskManager:
                 return [base_path]
         
         # 如果没有找到有效路径，使用默认值
-        return [default_path]
+        return [self.default_allowed_path]
+        
+    # UI状态管理相关方法已移除
 
 
-def create_login_interface(auth_handler, task_config, debug):
-    """创建统一的登录和标注界面，登录成功后直接切换显示"""
+def create_login_interface(auth_handler, task_config, debug, dev_user=None):
+    """
+    创建统一的登录和标注界面，登录成功后直接切换显示
+    
+    Args:
+        auth_handler: 认证处理器
+        task_config: 任务配置
+        debug: 是否为调试模式
+        dev_user: 开发模式用户，如果指定则自动跳过登录
+    """
     
     # 先创建标注界面管理器（使用临时用户，获取配置）
     temp_manager = TaskManager(task_config, "temp_user", debug=debug)
@@ -647,13 +787,13 @@ def create_login_interface(auth_handler, task_config, debug):
             gr.Markdown("# ⚠️ 数据库未初始化\n运行: `python -m importers.annotation_importer`")
         return error_demo
     
-    with gr.Blocks(title="物体属性标注工具", css=temp_manager.custom_css) as unified_demo:
-        logged_in_user = gr.State(value=None)
+    with gr.Blocks(title=temp_manager.ui_config['title'], css=temp_manager.custom_css) as unified_demo:
+        logged_in_user = gr.State(value=dev_user)  # 设置初始用户
         current_manager_state = gr.State(value=None)
         
-        # 登录面板（初始显示）
-        with gr.Column(visible=True, elem_id="login_panel") as login_panel:
-            gr.Markdown("# 🔐 物体属性标注工具")
+        # 登录面板（初始显示，如果是开发模式则隐藏）
+        with gr.Column(visible=(dev_user is None), elem_id="login_panel") as login_panel:
+            gr.Markdown(f"# 🔐 {temp_manager.ui_config['title']}")
             gr.Markdown("## 登录")
             
             with gr.Column():
@@ -662,10 +802,12 @@ def create_login_interface(auth_handler, task_config, debug):
                 login_btn = gr.Button("登录", variant="primary", size="lg")
                 login_status = gr.Textbox(label="状态", interactive=False, visible=False)
         
-        # 标注界面面板（登录后显示，预先创建但初始隐藏）
-        with gr.Column(visible=False) as annotation_panel:
+        # 标注界面面板（登录后显示，如果是开发模式则初始显示）
+        with gr.Column(visible=(dev_user is not None)) as annotation_panel:
+            # 使用ComponentFactory创建界面组件
+            factory = ComponentFactory()
+            
             # 预先创建标注界面的所有组件（初始隐藏）
-            # 这些组件会在登录成功后激活
             annotation_components = {}
             
             # 用户信息
@@ -675,48 +817,38 @@ def create_login_interface(auth_handler, task_config, debug):
             annotation_components['current_index'] = gr.State(value=0)
             annotation_components['nav_direction'] = gr.State(value="next")
             
-            # Model ID 和状态框
-            with gr.Row(equal_height=True, elem_id="search_row"):
-                annotation_components['model_id_display'] = gr.Textbox(label="Model ID", interactive=False, scale=3)
-                if temp_manager.ui_config.get('show_status'):
-                    annotation_components['status_box'] = gr.HTML(value="")
+            # 使用布局配置构建界面（同时创建和渲染组件）
+            factory.build_layout(temp_manager.components_config, temp_manager.layout_config)
             
-            # GIF 和属性字段
-            with gr.Row(elem_id="main_content_row"):
-                with gr.Column(scale=1, elem_id="gif_container"):
-                    annotation_components['gif_display'] = gr.Image(label="物体可视化", type="filepath", height=580, container=True, show_download_button=False)
-                
-                with gr.Column(scale=1, elem_id="info_column"):
-                    field_components = []
-                    checkbox_components = []
-                    
-                    for field in temp_manager.field_configs:
-                        with gr.Column():
-                            if field.get('has_checkbox') and temp_manager.ui_config.get('enable_checkboxes'):
-                                chk = gr.Checkbox(
-                                    label=f"{temp_manager.ui_config.get('checkbox_label', '✗')} {field['label']}", 
-                                    value=False, container=False
-                                )
-                                checkbox_components.append(chk)
-                            
-                            comp = gr.Textbox(
-                                label="",
-                                lines=field.get('lines', 1),
-                                placeholder=field.get('placeholder', ''),
-                                show_label=False
-                            )
-                            field_components.append(comp)
-                    
-                    annotation_components['field_components'] = field_components
-                    annotation_components['checkbox_components'] = checkbox_components
+            # 获取创建的组件
+            components = factory.get_all_components()
             
-            # 按钮和进度
-            with gr.Row():
-                annotation_components['prev_btn'] = gr.Button("⬅️ 上一个", size="lg")
-                annotation_components['save_btn'] = gr.Button("💾 保存", variant="primary", size="lg")
-                annotation_components['next_btn'] = gr.Button("➡️ 下一个", size="lg")
+            # 提取字段组件和checkbox组件
+            field_components = []
+            checkbox_components = []
+            for field_config in temp_manager.field_configs:
+                field_id = field_config['key']
+                comp = components.get(field_id)
+                if isinstance(comp, tuple):
+                    # (textbox, checkbox) 元组
+                    field_components.append(comp[0])
+                    checkbox_components.append(comp[1])
+                else:
+                    field_components.append(comp)
             
-            annotation_components['progress'] = gr.Textbox(label="进度", interactive=False)
+            # 获取其他组件
+            annotation_components['gif_display'] = components.get('image_url')
+            annotation_components['image_p1'] = components.get('image_url_p1')
+            annotation_components['image_p2'] = components.get('image_url_p2')
+            annotation_components['model_id_display'] = components.get('model_id')
+            annotation_components['status_box'] = components.get('annotation_status')
+            annotation_components['progress'] = components.get('progress_box')
+            annotation_components['scale_slider'] = components.get('scale_slider')
+            annotation_components['prev_btn'] = components.get('prev_btn')
+            annotation_components['next_btn'] = components.get('next_btn')
+            annotation_components['save_btn'] = components.get('save_btn')
+            annotation_components['field_components'] = field_components
+            annotation_components['checkbox_components'] = checkbox_components
             
             # 导出按钮
             if not debug and temp_manager.data_source == 'database':
@@ -751,6 +883,12 @@ def create_login_interface(auth_handler, task_config, debug):
                 username_value = result["user"]["username"]
                 manager = TaskManager(task_config, username_value, debug=debug)
                 
+                # 创建新的ComponentFactory实例
+                factory = ComponentFactory()
+                
+                # 使用布局配置构建界面
+                factory.build_layout(manager.components_config, manager.layout_config)
+                
                 # 初始化标注界面数据
                 init_data = load_annotation_data(manager, 0)
                 
@@ -773,62 +911,114 @@ def create_login_interface(auth_handler, task_config, debug):
         
         # 标注界面数据加载函数（复用 TaskManager 的逻辑）
         def load_annotation_data(manager, index):
-            """加载标注界面数据"""
+            """加载标注界面数据（重构版）"""
             if not manager or not manager.visible_keys or index >= len(manager.visible_keys):
                 # 返回空数据
-                field_count = len(manager.field_configs) if manager else len(temp_manager.field_configs)
-                checkbox_count = sum(1 for f in (manager.field_configs if manager else temp_manager.field_configs) if f.get('has_checkbox'))
-                status_count = 1 if (manager.ui_config if manager else temp_manager.ui_config).get('show_status') else 0
-                total = 2 + field_count + checkbox_count + status_count + 1  # gif + model_id + fields + checkboxes + status + progress
-                return [gr.update()] * total
-            
+                # 获取组件数量
+                components = factory.get_all_components()
+                total = len(components) + 1  # +1 for original_dimensions state
+                return tuple([gr.update()] * total)
+
             model_id = manager.visible_keys[index]
-            item = manager.all_data[model_id]
-            attrs = manager.data_handler.parse_item(item)
-            
-            # 【关键改动】浏览即占有：如果数据未分配，立即分配给当前用户
-            current_uid = attrs.get('uid', '')
-            if not current_uid or current_uid == '':
-                # 数据未分配，立即占有（只设置uid，不触碰其他数据）
-                manager.data_handler.assign_to_user(model_id, manager.user_uid)
-                print(f"🔒 占有数据: {model_id} -> {manager.user_uid}")
-                # 刷新缓存
-                manager.all_data = manager.data_handler.load_data()
-                # 重新计算可见数据（排除其他用户已占有的数据）
-                manager.visible_keys = []
-                for key, value in manager.all_data.items():
-                    item_attrs = manager.data_handler.parse_item(value)
-                    item_uid = item_attrs.get('uid', '')
-                    if not item_uid or item_uid == manager.user_uid:
-                        manager.visible_keys.append(key)
-                # 重新获取属性（现在包含了uid）
-                item = manager.all_data[model_id]
-                attrs = manager.data_handler.parse_item(item)
-            
-            gif_path = attrs.get('image_url', None)
-            if gif_path and not os.path.exists(gif_path):
-                gif_path = None
-            
-            field_values = []
-            checkbox_values = []
-            for field in manager.field_configs:
-                value = attrs.get(field['key'], '')
-                field_values.append(manager.field_processor.process_load(field, value))
+            item = manager.all_data.get(model_id)
+            if not item:
+                # 如果找不到项目，也返回空数据
+                return load_annotation_data(None, 0)
                 
-                if field.get('has_checkbox'):
-                    checkbox_values.append(attrs.get(f"chk_{field['key']}", False))
+            attrs = manager.data_handler.parse_item(item)
+
+            # 浏览即占有
+            current_uid = attrs.get('uid', '')
+            if not current_uid:
+                if hasattr(manager.data_handler, "assign_to_user"):
+                    manager.data_handler.assign_to_user(model_id, manager.user_uid)
+                    print(f"🔒 占有数据: {model_id} -> {manager.user_uid}")
+                    manager.all_data = manager.data_handler.load_data()
+                    manager._refresh_visible_keys()
+                    item = manager.all_data.get(model_id, item) # 重新获取
+                    attrs = manager.data_handler.parse_item(item)
+
+            # --- 按顺序构建所有UI组件的更新 ---
+            outputs = []
             
-            prog = f"{index + 1} / {len(manager.visible_keys)}"
+            # 1. 图片组件
+            is_part_annotation = manager.task_name == 'part_annotation'
+            image_keys = ['image_url', 'image_url_p1', 'image_url_p2'] if is_part_annotation else ['gif_display']
             
-            result = [gr.update(value=v) for v in [gif_path, model_id] + field_values + checkbox_values]
+            # 修正：确保使用正确的组件ID
+            if is_part_annotation:
+                image_comp_ids = ['gif_display', 'image_p1', 'image_p2']
+                image_data_keys = ['image_url', 'image_url_p1', 'image_url_p2']
+            else:
+                image_comp_ids = ['gif_display']
+                image_data_keys = ['image_url']
+
+            for key in image_data_keys:
+                img_path = attrs.get(key)
+                if img_path and not os.path.exists(img_path):
+                    img_path = None
+                outputs.append(gr.update(value=img_path))
+
+            # 2. Model ID
+            outputs.append(gr.update(value=model_id))
+
+            # 3. 字段 (Textbox) 和 Checkbox
+            field_updates = []
+            checkbox_updates = []
             
+            # 确保字段顺序与UI一致
+            sorted_fields = sorted(manager.field_configs, key=lambda x: (
+                ['object_name', 'object_dimension', 'label', 'name'].index(x['key'])
+                if x['key'] in ['object_name', 'object_dimension', 'label', 'name']
+                else float('inf')
+            ))
+            
+            all_fields_config = temp_manager.field_configs
+            
+            # 获取UI上实际的字段顺序
+            if is_part_annotation:
+                left_keys = ['object_name', 'object_dimension', 'label', 'name']
+                right_keys = ['dimension', 'material', 'density', 'mass']
+                
+                left_fields = [f for f in all_fields_config if f['key'] in left_keys]
+                right_fields = [f for f in all_fields_config if f['key'] in right_keys]
+                
+                # 确保dimension在滑块之前
+                dim_field = next((f for f in right_fields if f['key'] == 'dimension'), None)
+                other_right = [f for f in right_fields if f['key'] != 'dimension']
+                
+                if dim_field:
+                    ordered_fields = left_fields + [dim_field] + other_right
+                else:
+                    ordered_fields = left_fields + other_right
+            else:
+                ordered_fields = all_fields_config
+
+
+            for field in ordered_fields:
+                value = attrs.get(field['key'], '')
+                processed_value = manager.field_processor.process_load(field, value)
+                is_interactive = field.get('interactive', True)
+                
+                field_updates.append(gr.update(value=processed_value, interactive=is_interactive))
+                
+                if field.get('has_checkbox') and manager.ui_config.get('enable_checkboxes'):
+                    chk_value = attrs.get(f"chk_{field['key']}", False)
+                    checkbox_updates.append(gr.update(value=chk_value))
+            
+            outputs.extend(field_updates)
+            outputs.extend(checkbox_updates)
+
+            # 4. 状态框
             if manager.ui_config.get('show_status'):
                 status_html = manager._render_status(attrs.get('annotated', False))
-                result.append(gr.update(value=status_html))
-            
-            result.append(gr.update(value=prog))
-            
-            return result
+                outputs.append(gr.update(value=status_html))
+
+            # 5. 进度条
+            prog = f"{index + 1} / {len(manager.visible_keys)}"
+            outputs.append(gr.update(value=prog))
+
+            return tuple(outputs)
         
         # 标注界面的事件处理函数（需要manager状态）
         def _resolve_model_for_annotation(manager, index, model_id):
@@ -863,7 +1053,10 @@ def create_login_interface(auth_handler, task_config, debug):
             
             for idx, field in enumerate(manager.field_configs):
                 key = field['key']
-                save_dict[key] = manager.field_processor.process_save(field, field_values[idx])
+                # 只保存可交互的字段
+                if field.get('interactive', True):
+                    save_dict[key] = manager.field_processor.process_save(field, field_values[idx])
+                
                 if field.get('has_checkbox'):
                     chk_value = checkbox_values[checkbox_idx]
                     save_dict[f"chk_{key}"] = chk_value
@@ -872,10 +1065,25 @@ def create_login_interface(auth_handler, task_config, debug):
                     checkbox_idx += 1
             
             score = 0 if has_error else 1
-            manager.data_handler.save_item(resolved_model, save_dict, score=score, uid=manager.user_uid)
-            print(f"✅ 保存: {resolved_model}, score={score}, uid={manager.user_uid}")
             
+            # 直接使用data_handler保存
+            result = manager.data_handler.save_item(
+                resolved_model,
+                save_dict,
+                score=score,
+                uid=manager.user_uid
+            )
+            
+            if isinstance(result, dict) and not result.get("success", True):
+                error_msg = result.get("message", "未知错误")
+                print(f"❌ 保存失败: {error_msg}")
+            else:
+                print(f"✅ 保存: {resolved_model}, score={score}, uid={manager.user_uid}")
+                
+            # 重新加载数据
             manager.all_data = manager.data_handler.load_data()
+            manager._refresh_visible_keys()
+                
             return tuple(load_annotation_data(manager, resolved_index))
         
         def check_modified_annotation(manager, index, model_id, *values):
@@ -919,32 +1127,62 @@ def create_login_interface(auth_handler, task_config, debug):
             return False
         
         def navigate_annotation_with_check(manager, index, model_id, direction, *values):
-            """标注界面导航（带修改检测）"""
+            """
+            标注界面导航（带修改检测）- 返回操作字典
+            """
             if not manager:
-                return tuple([gr.update()] * 20)
-            
+                return {"action": "none"}
+
             resolved_index, resolved_model = _resolve_model_for_annotation(manager, index, model_id)
             modified = check_modified_annotation(manager, resolved_index, resolved_model, *values)
-            
+
             if modified:
-                # 有修改，显示弹窗
-                return (
-                    gr.update(value=resolved_index),
-                    gr.update(visible=True),
-                    gr.update(value=direction)
-                ) + tuple([gr.update()] * 17)
+                # 有修改，请求显示弹窗
+                return {
+                    "action": "show_confirm",
+                    "index": resolved_index,
+                    "direction": direction
+                }
             else:
-                # 无修改，直接跳转
+                # 无修改，直接导航
                 if direction == "next":
                     new_index = min(len(manager.visible_keys) - 1, resolved_index + 1)
                 else:
                     new_index = max(0, resolved_index - 1)
                 
+                return {
+                    "action": "navigate",
+                    "new_index": new_index
+                }
+
+        def navigate_wrapper(manager, index, model_id, direction, *values):
+            """
+            导航包装器：根据检查结果动态构建Gradio更新
+            """
+            result = navigate_annotation_with_check(manager, index, model_id, direction, *values)
+            
+            action = result.get("action")
+            
+            if action == "show_confirm":
+                # 显示确认弹窗
+                return (
+                    gr.update(value=result["index"]),
+                    gr.update(visible=True),
+                    gr.update(value=result["direction"])
+                ) + tuple([gr.update()] * len(annotation_outputs))
+            
+            elif action == "navigate":
+                # 直接导航
+                new_index = result["new_index"]
                 return (
                     gr.update(value=new_index),
                     gr.update(visible=False),
                     gr.update()
                 ) + tuple(load_annotation_data(manager, new_index))
+            
+            else: # action == "none"
+                # 无操作
+                return (gr.update(), gr.update(), gr.update()) + tuple([gr.update()] * len(annotation_outputs))
         
         def save_and_nav_annotation(manager, index, model_id, direction, *values):
             """保存并继续"""
@@ -984,8 +1222,21 @@ def create_login_interface(auth_handler, task_config, debug):
         
         # 计算输出组件列表
         status_outputs = [annotation_components['status_box']] if 'status_box' in annotation_components else []
-        annotation_outputs = [
-            annotation_components['gif_display'],
+        
+        # 根据任务类型决定使用哪些图片组件
+        if temp_manager.task_name == 'part_annotation':
+            # part_annotation使用三张图片
+            image_outputs = [
+                annotation_components['gif_display'],
+                annotation_components['image_p1'],
+                annotation_components['image_p2'],
+            ]
+        else:
+            # 默认模式只有一张图片
+            image_outputs = [annotation_components['gif_display']]
+        
+        # 合并所有输出
+        annotation_outputs = image_outputs + [
             annotation_components['model_id_display'],
         ] + annotation_components['field_components'] + annotation_components['checkbox_components'] + status_outputs + [annotation_components['progress']]
         
@@ -1011,15 +1262,15 @@ def create_login_interface(auth_handler, task_config, debug):
         )
         
         annotation_components['prev_btn'].click(
-            lambda mgr, idx, mid, dir, *vals: navigate_annotation_with_check(mgr, idx, mid, dir, *vals),
-            inputs=[current_manager_state, annotation_components['current_index'], annotation_components['model_id_display'], 
+            navigate_wrapper,
+            inputs=[current_manager_state, annotation_components['current_index'], annotation_components['model_id_display'],
                    gr.State("prev")] + annotation_components['field_components'] + annotation_components['checkbox_components'],
             outputs=[annotation_components['current_index'], annotation_components['confirm_modal'], annotation_components['nav_direction']] + annotation_outputs
         )
         
         annotation_components['next_btn'].click(
-            lambda mgr, idx, mid, dir, *vals: navigate_annotation_with_check(mgr, idx, mid, dir, *vals),
-            inputs=[current_manager_state, annotation_components['current_index'], annotation_components['model_id_display'], 
+            navigate_wrapper,
+            inputs=[current_manager_state, annotation_components['current_index'], annotation_components['model_id_display'],
                    gr.State("next")] + annotation_components['field_components'] + annotation_components['checkbox_components'],
             outputs=[annotation_components['current_index'], annotation_components['confirm_modal'], annotation_components['nav_direction']] + annotation_outputs
         )
@@ -1049,11 +1300,22 @@ def create_login_interface(auth_handler, task_config, debug):
                 if not manager or not hasattr(manager.data_handler, 'export_to_jsonl'):
                     return gr.update(value="❌ 导出功能不可用", visible=True)
                 try:
-                    filepath = manager.data_handler.export_to_jsonl()
+                    # 使用配置的导出目录
+                    filepath = manager.data_handler.export_to_jsonl(output_dir=manager.export_dir)
                     filename = os.path.basename(filepath)
                     return gr.update(value=f"✅ 导出成功: {filename}", visible=True)
+                except PermissionError:
+                    error_msg = f"导出失败: 没有写入权限，请检查目录 '{manager.export_dir}' 的访问权限"
+                    print(f"❌ {error_msg}")
+                    return gr.update(value=f"❌ {error_msg}", visible=True)
+                except OSError as e:
+                    error_msg = f"导出失败: 文件系统错误 - {str(e)}"
+                    print(f"❌ {error_msg}")
+                    return gr.update(value=f"❌ {error_msg}", visible=True)
                 except Exception as e:
-                    return gr.update(value=f"❌ 导出失败: {str(e)}", visible=True)
+                    error_msg = str(e)
+                    print(f"❌ 导出错误详情: {error_msg}")
+                    return gr.update(value=f"❌ 导出失败: {error_msg}", visible=True)
             
             annotation_components['export_btn'].click(
                 lambda mgr: export_annotation_data(mgr),
@@ -1074,6 +1336,22 @@ def create_login_interface(auth_handler, task_config, debug):
             inputs=[current_manager_state],
             outputs=annotation_outputs
         )
+        
+        # 如果是自动登录模式，在界面加载后自动创建管理器并初始化界面
+        if dev_user:  # 使用dev_user替代未定义的auto_login_user
+            def auto_login():
+                manager = TaskManager(task_config, dev_user, debug=debug)
+                # 返回manager和所有输出组件的值，确保输出数量匹配
+                output_values = load_annotation_data(manager, 0)
+                # 将列表转换为元组，这样可以与其他元组连接
+                return (manager,) + tuple(output_values)  # 使用tuple()将列表转换为元组
+                
+            unified_demo.load(
+                fn=auto_login,
+                outputs=[current_manager_state] + annotation_outputs
+            )
+        
+        # 上面已经处理了dev_user模式下的自动登录，这里不需要重复
     
     return unified_demo
 
@@ -1142,9 +1420,22 @@ def main():
         
         # 直接创建标注界面
         manager = TaskManager(task_config, user_uid, debug=args.debug)
-        demo = manager.build_interface()
+        
+        # 创建登录界面（即使是开发模式也使用统一界面，只是自动登录）
+        from src.auth_handler import AuthHandler
+        auth_handler = AuthHandler()
+        demo = create_login_interface(auth_handler, task_config, args.debug, dev_user=user_uid)
+        
+        # 使用manager获取允许的路径（与用户相关）
         allowed_paths = manager.get_allowed_paths()
-        demo.launch(server_port=args.port, server_name="0.0.0.0", allowed_paths=allowed_paths)
+        
+        # 使用统一界面启动
+        demo.launch(
+            server_port=args.port,
+            server_name="0.0.0.0",
+            allowed_paths=allowed_paths,
+            show_api=False  # 禁用API文档，避免启动检查问题
+        )
     else:
         # 生产模式：需要登录
         from src.auth_handler import AuthHandler
@@ -1161,11 +1452,17 @@ def main():
         # 创建登录界面
         demo = create_login_interface(auth_handler, task_config, args.debug)
         
-        # 获取允许访问的路径（用于图片加载）
+        # 创建与登录用户相关的临时管理器以获取正确的路径权限
+        # 使用 "temp_user" 是为了确保它与开发模式的行为一致
         temp_manager = TaskManager(task_config, "temp_user", debug=args.debug)
         allowed_paths = temp_manager.get_allowed_paths()
         
-        demo.launch(server_port=args.port, server_name="0.0.0.0", allowed_paths=allowed_paths)
+        demo.launch(
+            server_port=args.port,
+            server_name="0.0.0.0",
+            allowed_paths=allowed_paths,
+            show_api=False  # 禁用API文档，避免启动检查问题
+        )
 
 
 if __name__ == "__main__":
