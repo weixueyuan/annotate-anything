@@ -100,9 +100,9 @@ class ComponentFactory:
             # 存储checkbox引用
             self.checkboxes[config.get("id")] = checkbox
             
-            # 创建textbox（显示原始标签以避免标签丢失）
+            # 创建textbox（显示原始标签）
             textbox = gr.Textbox(
-                label="",
+                label=config.get("label", ""),  # 使用原始标签
                 placeholder=config.get("placeholder", ""),
                 lines=config.get("lines", 1),
                 interactive=bool(config.get("interactive", True)),
@@ -135,7 +135,7 @@ class ComponentFactory:
         
         return gr.Textbox(
             label=config.get("label", ""),
-            placeholder=config.get("placeholder", "输入后按回车搜索" if searchable else ""),
+            placeholder=config.get("placeholder", "输入后必须按回车键才能搜索" if searchable else ""),
             lines=config.get("lines", 1),
             interactive=bool(interactive),
             elem_id=config.get("id")

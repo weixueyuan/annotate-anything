@@ -47,6 +47,16 @@ class JSONLHandler:
         """
         self.jsonl_path = jsonl_path
         self._data_cache = None  # 数据缓存
+        
+        # 初始化字段处理器
+        from .field_processor import FieldProcessor
+        self.field_processor = FieldProcessor()
+        
+        # 已知的字段配置（用于处理特殊字段）
+        self.field_configs = {
+            'placement': {'key': 'placement', 'process': 'array_to_string'},
+            # 可以添加其他需要特殊处理的字段
+        }
     
     def load_data(self) -> Dict[str, JSONLItem]:
         """加载所有数据（和 DatabaseHandler.load_data 接口一致）"""
@@ -174,9 +184,11 @@ class JSONLHandler:
         if isinstance(item, JSONLItem):
             result = item.to_dict()
             
-            # 预处理 placement：数组转字符串（UI 显示需要）
-            if 'placement' in result and isinstance(result['placement'], list):
-                result['placement'] = ', '.join(result['placement'])
+            # 使用字段处理器处理特殊字段
+            for key, value in list(result.items()):
+                if key in self.field_configs and isinstance(value, list):
+                    field_config = self.field_configs[key]
+                    result[key] = self.field_processor.process_load(field_config, value)
             
             return result
         return {}
@@ -267,9 +279,12 @@ class JSONLHandler:
                 }
                 full_data.update(item.data)
                 
-                # 处理 placement：字符串转数组
-                if 'placement' in full_data and isinstance(full_data['placement'], str):
-                    full_data['placement'] = [x.strip() for x in full_data['placement'].split(',') if x.strip()]
+                # 处理特殊字段
+                for key, value in list(full_data.items()):
+                    if key in self.field_configs:
+                        field_config = self.field_configs[key]
+                        if isinstance(value, str) and field_config.get('process') == 'array_to_string':
+                            full_data[key] = self.field_processor.process_save(field_config, value)
                 
                 # 写入 JSONL 格式
                 line_obj = {model_id: full_data}
@@ -398,14 +413,12 @@ class JSONLHandler:
                     # 构建完整数据（包含元数据）
                     full_data = item.to_dict()
                     
-                    # 处理 placement：如果是字符串，转换为数组（JSONL格式）
-                    if 'placement' in full_data:
-                        if isinstance(full_data['placement'], str):
-                            # 字符串转数组
-                            full_data['placement'] = [x.strip() for x in full_data['placement'].split(',') if x.strip()]
-                        elif isinstance(full_data['placement'], list):
-                            # 已经是数组，保持不变
-                            pass
+                    # 处理特殊字段
+                    for key, value in list(full_data.items()):
+                        if key in self.field_configs:
+                            field_config = self.field_configs[key]
+                            if isinstance(value, str) and field_config.get('process') == 'array_to_string':
+                                full_data[key] = self.field_processor.process_save(field_config, value)
                     
                     # 写入 JSONL 格式：{"model_id": {数据}}
                     line_obj = {model_id: full_data}

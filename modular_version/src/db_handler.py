@@ -24,6 +24,12 @@ class DatabaseHandler:
         # 初始化数据库
         init_database(db_path)
         self.session = get_session(db_path)
+        
+        # 已知的字段配置（用于处理特殊字段）
+        self.field_configs = {
+            'placement': {'key': 'placement', 'process': 'array_to_string'},
+            # 可以添加其他需要特殊处理的字段
+        }
     
     def load_data(self) -> Dict[str, Annotation]:
         """加载所有数据"""
@@ -126,11 +132,6 @@ class DatabaseHandler:
         """解析单条数据"""
         if isinstance(item, Annotation):
             result = item.to_dict()
-            
-            # 预处理 placement：数组转字符串（兼容旧版逻辑）
-            if 'placement' in result and isinstance(result['placement'], list):
-                result['placement'] = ', '.join(result['placement'])
-            
             return result
         return {}
         
@@ -323,14 +324,15 @@ class DatabaseHandler:
                     if ann.data:
                         full_data.update(ann.data)
                     
-                    # 处理 placement：如果是字符串，转换为数组（JSONL格式）
-                    if 'placement' in full_data:
-                        if isinstance(full_data['placement'], str):
-                            # 字符串转数组
-                            full_data['placement'] = [x.strip() for x in full_data['placement'].split(',') if x.strip()]
-                        elif isinstance(full_data['placement'], list):
-                            # 已经是数组，保持不变
-                            pass
+                    # 处理需要特殊转换的字段（如 placement）
+                    for key, value in list(full_data.items()):
+                        # 查找字段配置
+                        if key in self.field_configs:
+                            field_config = self.field_configs[key]
+                            
+                            # 导出时需要是数组格式
+                            if isinstance(value, str) and field_config.get('process') == 'array_to_string':
+                                full_data[key] = self.field_processor.process_save(field_config, value)
                     
                     # 写入 JSONL 格式：{"model_id": {数据}}
                     line_obj = {ann.model_id: full_data}

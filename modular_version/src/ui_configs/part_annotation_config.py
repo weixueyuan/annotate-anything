@@ -17,7 +17,7 @@ COMPONENTS = [
         "id": "model_id",
         "type": "search",
         "label": "🔍 Model ID（可搜索）",
-        "placeholder": "显示当前ID，可输入其他ID按回车搜索",
+        "placeholder": "显示当前ID，可输入其他ID，必须按回车键才能搜索",
         "lines": 1,
         "searchable": True,
         "search_field": "model_id"
@@ -184,16 +184,14 @@ LAYOUT_CONFIG = {
                 }
             ]
         },
-        
-        # 进度
-        "progress_box",
-        
         # 操作按钮
         {
             "type": "hstack",
             "elem_id": "button_row",
             "children": ["prev_btn", "save_btn", "next_btn"]
-        }
+        },
+        # 进度
+        "progress_box"
     ]
 }
 
