@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 数据库
+databases/*.db
+*.db
+
+# 数据文件（可选）
+# *.jsonl
+
+# 环境
+venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 临时文件
+*.log
+.DS_Store
+
+
