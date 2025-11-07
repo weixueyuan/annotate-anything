@@ -1,4 +1,0 @@
-{"home-others-panel-001": {"category": "panel", "description": "A rectangular panel with light gray surface", "material": "plastic", "dimensions": "0.6 * 0.3 * 0.02", "placement": ["OnWall"]}}
-{"home-others-chair-002": {"category": "chair", "description": "Modern office chair", "material": "leather+metal", "dimensions": "0.6 * 0.6 * 1.0", "placement": ["OnFloor"]}}
-{"home-others-chair-003": {"annotated": true, "uid": "user1", "score": 1, "category": "chair", "description": "Red wooden chair", "material": "wood", "dimensions": "0.5 * 0.5 * 0.8", "placement": ["OnFloor"], "chk_category": false, "chk_description": false, "chk_material": false, "chk_dimensions": false, "chk_placement": false}}
-
