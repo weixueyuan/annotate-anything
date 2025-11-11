@@ -28,6 +28,7 @@ class TaskManager:
     
     def __init__(self, task_config, user_uid="default_user", debug=False, export_dir="exports", default_allowed_path="/mnt"):
         self.task_config = task_config
+        # 保留user_uid作为初始值，但在函数中使用传入的user_uid
         self.user_uid = user_uid
         self.task_name = task_config['task']
         self.debug = debug
@@ -108,80 +109,79 @@ class TaskManager:
         self.all_data = self.data_handler.load_data()
         
         # 过滤可见数据
-        self._refresh_visible_keys()
+        self._refresh_visible_keys(self.user_uid)
         
         print(f"✓ 加载完成")
         print(f"  总数: {len(self.all_data)}, 可见: {len(self.visible_keys)}")
     
-    def _refresh_visible_keys(self):
+    def _refresh_visible_keys(self, user_uid):
         """重新计算用户可见的数据键列表"""
-        self.visible_keys = []
+        visible_keys = []
         for key, value in self.all_data.items():
             attrs = self.data_handler.parse_item(value)
             item_uid = attrs.get('uid', '')
-            if not item_uid or item_uid == self.user_uid:
-                self.visible_keys.append(key)
-    
-    def build_interface(self):
-        """构建界面"""
-        if not self.data_handler:
-            with gr.Blocks() as demo:
-                gr.Markdown(f"# ⚠️ 数据库未初始化\n运行: `python tools/import_to_db.py`")
-            return demo
+            if not item_uid or item_uid == user_uid:
+                visible_keys.append(key)
         
+        # 更新实例变量
+        self.visible_keys = visible_keys
+        return visible_keys
+    
+    def build_interface(self, demo, user_state):
+        """
+        在给定的Gradio Blocks实例中构建界面。
+        这个方法不应该创建自己的Blocks实例。
+        """
         # 创建组件工厂
         self.factory = ComponentFactory()
         
-        with gr.Blocks(title=self.ui_config['title'], css=self.custom_css) as demo:
-            gr.Markdown(f"# {self.ui_config['title']}")
-            
-            # 用户信息
-            if self.ui_config.get('show_user_info'):
-                other_count = len(self.all_data) - len(self.visible_keys)
-                self.components['user_info'] = gr.HTML(self._render_user_info(len(self.visible_keys), other_count))
-            
-            # State组件
-            self.components['current_index'] = gr.State(value=0)
-            self.components['nav_direction'] = gr.State(value="next")
-            
-            # 动态查找尺度滑块的目标字段
-            self.dimension_field_name = None
-            for comp_config in self.components_config:
-                if comp_config.get('type') == 'slider' and comp_config.get('target_field'):
-                    self.dimension_field_name = comp_config.get('target_field')
-                    break
-            
-            self.components['original_dimensions'] = gr.State(value="")  # 存储原始dimension/dimensions值
-            
-            # 使用布局配置构建界面（同时创建和渲染组件）
-            self.factory.build_layout(self.components_config, self.layout_config)
-            
-            # 获取创建的组件
-            self.components.update(self.factory.get_all_components())
-            
-            # 导出按钮（仅在正常模式下显示）
-            if not self.debug and self.data_source == 'database':
+        gr.Markdown(f"# {self.ui_config['title']}")
+        
+        # 用户信息
+        if self.ui_config.get('show_user_info'):
+            other_count = len(self.all_data) - len(self.visible_keys)
+            self.components['user_info'] = gr.HTML(self._render_user_info(len(self.visible_keys), other_count, self.user_uid))
+        
+        # State组件
+        self.components['current_index'] = gr.State(value=0)
+        self.components['nav_direction'] = gr.State(value="next")
+        
+        # 动态查找尺度滑块的目标字段
+        self.dimension_field_name = None
+        for comp_config in self.components_config:
+            if comp_config.get('type') == 'slider' and comp_config.get('target_field'):
+                self.dimension_field_name = comp_config.get('target_field')
+                break
+        
+        self.components['original_dimensions'] = gr.State(value="")  # 存储原始dimension/dimensions值
+        
+        # 使用布局配置构建界面（同时创建和渲染组件）
+        self.factory.build_layout(self.components_config, self.layout_config)
+        
+        # 获取创建的组件
+        self.components.update(self.factory.get_all_components())
+        
+        # 导出按钮（仅在正常模式下显示）
+        if not self.debug and self.data_source == 'database':
+            with gr.Row():
+                self.components['export_btn'] = gr.Button("📤 导出为JSONL", variant="secondary", size="lg")
+                self.components['export_status'] = gr.Textbox(label="导出状态", interactive=False, visible=False)
+        
+        # 确认弹窗
+        with gr.Column(visible=False, elem_id="confirm_modal") as confirm_modal:
+            with gr.Column(elem_id="confirm_card"):
+                gr.HTML("<h2>⚠️ 有未保存的修改</h2><p>是否继续？</p>")
                 with gr.Row():
-                    self.components['export_btn'] = gr.Button("📤 导出为JSONL", variant="secondary", size="lg")
-                    self.components['export_status'] = gr.Textbox(label="导出状态", interactive=False, visible=False)
-            
-            # 确认弹窗
-            with gr.Column(visible=False, elem_id="confirm_modal") as confirm_modal:
-                with gr.Column(elem_id="confirm_card"):
-                    gr.HTML("<h2>⚠️ 有未保存的修改</h2><p>是否继续？</p>")
-                    with gr.Row():
-                        self.components['save_and_continue'] = gr.Button("💾 保存并继续", variant="primary", size="sm")
-                        self.components['cancel_nav'] = gr.Button("❌ 取消", variant="secondary", size="sm")
-                    self.components['skip_changes'] = gr.Button("⚠️ 放弃更改", variant="stop", size="sm")
-            
-            self.components['confirm_modal'] = confirm_modal
-            
-            # 在Blocks上下文中绑定事件
-            self._bind_events(demo)
-            
-        return demo
+                    self.components['save_and_continue'] = gr.Button("💾 保存并继续", variant="primary", size="sm")
+                    self.components['cancel_nav'] = gr.Button("❌ 取消", variant="secondary", size="sm")
+                self.components['skip_changes'] = gr.Button("⚠️ 放弃更改", variant="stop", size="sm")
+        
+        self.components['confirm_modal'] = confirm_modal
+        
+        # 在Blocks上下文中绑定事件
+        self._bind_events(demo, user_state)
     
-    def _bind_events(self, demo):
+    def _bind_events(self, demo, user_state):
         """绑定所有事件处理函数"""
         # 提取字段组件和checkbox组件
         field_components = []
@@ -250,7 +250,7 @@ class TaskManager:
         self.load_outputs = load_outputs  # 保存以备后用
         
         # 页面加载时加载数据
-        demo.load(fn=self.load_data, inputs=[self.components['current_index']], outputs=self.load_outputs)
+        demo.load(fn=self.load_data, inputs=[self.components['current_index'], user_state], outputs=self.load_outputs)
         
         # 移除 model_id 变化时自动加载数据的事件
         # 只保留按回车键触发的搜索事件，避免用户修改但未按回车时触发搜索
@@ -275,16 +275,16 @@ class TaskManager:
             search_outputs = [self.components['current_index']] + self.load_outputs
             model_id_display.submit(
                 fn=self.search_and_load,
-                inputs=[model_id_display],
+                inputs=[user_state, model_id_display],
                 outputs=search_outputs
             )
         
         # 保存
-        save_inputs = [self.components['current_index'], model_id_display] + field_components + checkbox_components
+        save_inputs = [user_state, self.components['current_index'], model_id_display] + field_components + checkbox_components
         save_btn.click(fn=self.save_data, inputs=save_inputs, outputs=self.load_outputs)
         
         # 导航检查和跳转
-        nav_inputs = [self.components['current_index'], model_id_display] + field_components + checkbox_components
+        nav_inputs = [user_state, self.components['current_index'], model_id_display] + field_components + checkbox_components
         nav_outputs = [self.components['current_index']] + self.load_outputs + [self.components['confirm_modal'], self.components['nav_direction']]
         
         prev_btn.click(
@@ -306,7 +306,7 @@ class TaskManager:
             )
         
         # 确认弹窗按钮
-        save_and_continue_inputs = [self.components['current_index'], model_id_display, self.components['nav_direction']] + field_components + checkbox_components
+        save_and_continue_inputs = [user_state, self.components['current_index'], model_id_display, self.components['nav_direction']] + field_components + checkbox_components
         save_and_continue_outputs = [self.components['current_index']] + self.load_outputs + [self.components['confirm_modal']]
         self.components['save_and_continue'].click(
             fn=self.save_and_continue_nav,
@@ -317,7 +317,7 @@ class TaskManager:
         skip_and_continue_outputs = [self.components['current_index']] + self.load_outputs + [self.components['confirm_modal']]
         self.components['skip_changes'].click(
             fn=self.skip_and_continue_nav,
-            inputs=[self.components['current_index'], model_id_display, self.components['nav_direction']],
+            inputs=[user_state, self.components['current_index'], model_id_display, self.components['nav_direction']],
             outputs=skip_and_continue_outputs
         )
         
@@ -326,17 +326,20 @@ class TaskManager:
             outputs=[self.components['confirm_modal']]
         )
     
-    def load_data(self, index):
+    def load_data(self, index, user_uid):
         """
         根据组件配置动态加载数据
         通过 data_field 属性将数据库字段映射到UI组件
         """
+        # 确保 visible_keys 是最新的
+        visible_keys = self._refresh_visible_keys(user_uid)
+
         if not self.visible_keys or index >= len(self.visible_keys):
             # 返回空值（数量根据组件配置动态计算，跳过按钮）
             empty_result = []
             # 添加用户信息
             if 'user_info' in self.components:
-                empty_result.append(self._render_user_info(0, 0))
+                empty_result.append(self._render_user_info(0, 0, user_uid))
             
             for comp_config in self.components_config:
                 comp_type = comp_config['type']
@@ -349,6 +352,8 @@ class TaskManager:
                     empty_result.append("")  # 字段值
                 elif comp_config['id'] == 'scale_slider':
                     empty_result.append(1.0)  # 滑块默认值（float）
+                elif comp_type == 'image':
+                    empty_result.append(None) # 修复：图片组件为空时必须返回None
                 else:
                     empty_result.append("")
             return empty_result + [""]  # +1 for original_dimensions state
@@ -358,8 +363,26 @@ class TaskManager:
         # 直接从all_data获取数据
         item = self.all_data.get(model_id)
         if not item:
+            # 此处也应返回与上面结构相同的空结果
+            empty_result = []
+            if 'user_info' in self.components:
+                empty_result.append(self._render_user_info(0, 0, user_uid))
+            for comp_config in self.components_config:
+                comp_type = comp_config['type']
+                if comp_type == 'button':
+                    continue
+                
+                if comp_config.get('has_checkbox'):
+                    empty_result.append(False)
+                    empty_result.append("")
+                elif comp_config['id'] == 'scale_slider':
+                    empty_result.append(1.0)
+                elif comp_type == 'image':
+                    empty_result.append(None) # 修复：图片组件为空时必须返回None
+                else:
+                    empty_result.append("")
             return empty_result + [""]
-            
+
         attrs = self.data_handler.parse_item(item)
         
         # 浏览即占有 - 简单直接方式（不使用缓存）
@@ -367,12 +390,12 @@ class TaskManager:
         if not current_uid or current_uid == '':
             # 数据未分配，立即占有（只设置uid，不触碰其他数据）
             if hasattr(self.data_handler, "assign_to_user"):
-                self.data_handler.assign_to_user(model_id, self.user_uid)
-                print(f"🔒 占有数据: {model_id} -> {self.user_uid}")
+                self.data_handler.assign_to_user(model_id, user_uid)
+                print(f"🔒 占有数据: {model_id} -> {user_uid}")
                 # 重新加载全部数据（简单直接）
                 self.all_data = self.data_handler.load_data()
                 # 重新计算可见数据
-                self._refresh_visible_keys()
+                self._refresh_visible_keys(user_uid)
                 # 重新获取当前项
                 item = self.all_data.get(model_id)
                 attrs = self.data_handler.parse_item(item)
@@ -384,7 +407,7 @@ class TaskManager:
         # 添加用户信息
         if 'user_info' in self.components:
             other_count = len(self.all_data) - len(self.visible_keys)
-            result.append(self._render_user_info(len(self.visible_keys), other_count))
+            result.append(self._render_user_info(len(self.visible_keys), other_count, user_uid))
         
         for comp_config in self.components_config:
             comp_id = comp_config['id']
@@ -456,13 +479,6 @@ class TaskManager:
         
         return result
     
-    def on_model_id_change(self, model_id_value):
-        """model_id 变化时加载对应的数据（已不再使用，保留函数以兼容旧代码）"""
-        if not model_id_value or model_id_value not in self.visible_keys:
-            return [0] + self.load_data(0)
-        new_index = self.visible_keys.index(model_id_value)
-        return [new_index] + self.load_data(new_index)
-    
     def scale_dimensions(self, original_dims, scale_value):
         """根据尺度滑块值计算缩放后的dimensions"""
         if not original_dims or not original_dims.strip():
@@ -490,11 +506,11 @@ class TaskManager:
             resolved_model = self.visible_keys[index]
         return resolved_index, resolved_model
     
-    def save_data(self, index, model_id, *values):
+    def save_data(self, user_uid, index, model_id, *values):
         """保存数据"""
         resolved_index, resolved_model = self._resolve_model(index, model_id)
         if resolved_model is None:
-            return self.load_data(resolved_index)
+            return self.load_data(resolved_index, user_uid)
         
         num_fields = len(self.field_configs)
         field_values = values[:num_fields]
@@ -521,7 +537,7 @@ class TaskManager:
             resolved_model,
             attributes,
             score=score,
-            uid=self.user_uid
+            uid=user_uid
         )
         
         # 检查保存结果
@@ -544,7 +560,7 @@ class TaskManager:
             ">❌ 保存失败: {error_msg}</div>'''
             
             # 返回当前数据并显示错误信息
-            result = self.load_data(resolved_index)
+            result = self.load_data(resolved_index, user_uid)
             # 如果状态框在加载的组件中，则替换状态框内容
             for i, comp in enumerate(self.components_config):
                 if comp.get('data_field') == '_computed_status':
@@ -553,22 +569,23 @@ class TaskManager:
             return result
         else:
             # 保存成功
-            print(f"✅ 保存: {resolved_model}, score={score}, uid={self.user_uid}")
+            print(f"✅ 保存: {resolved_model}, score={score}, uid={user_uid}")
             
             # 重新加载数据（简单直接）
             self.all_data = self.data_handler.load_data()
             
             # 重新计算可见键
-            self._refresh_visible_keys()
+            visible_keys = self._refresh_visible_keys(user_uid)
             
-            return self.load_data(resolved_index)
+            return self.load_data(resolved_index, user_uid)
     
-    def search_and_load(self, search_value):
+    def search_and_load(self, user_uid, search_value):
         """
         搜索功能：根据输入的值查找对应的 model_id
         只有在按下回车键时才会执行搜索
         
         Args:
+            user_uid: 用户ID
             search_value: model_id输入框的值
             
         Returns:
@@ -576,39 +593,53 @@ class TaskManager:
         """
         if not search_value or not search_value.strip():
             # 空搜索，不做任何操作，保持当前数据
-            return [self.components['current_index'].value] + self.load_data(self.components['current_index'].value)
+            return [self.components['current_index'].value] + self.load_data(self.components['current_index'].value, user_uid)
         
         search_value = search_value.strip()
+        
+        # 确保visible_keys是最新的
+        visible_keys = self._refresh_visible_keys(user_uid)
         
         # 查找 model_id（在 visible_keys 中）
         if search_value in self.visible_keys:
             # 找到了，跳转到该索引
             new_index = self.visible_keys.index(search_value)
             print(f"🔍 搜索成功: {search_value} (索引 {new_index})")
-            return [new_index] + self.load_data(new_index)
+            return [new_index] + self.load_data(new_index, user_uid)
         else:
             # 未找到，提示用户，保持当前数据
             print(f"⚠️  未找到: {search_value}")
-            return [self.components['current_index'].value] + self.load_data(self.components['current_index'].value)
+            return [self.components['current_index'].value] + self.load_data(self.components['current_index'].value, user_uid)
     
-    def has_real_changes(self, index, model_id, *field_values_and_checkboxes):
+    def has_real_changes(self, user_uid, index, model_id, *field_values_and_checkboxes):
         """检查当前字段值是否与数据库中的原始值不同"""
         if not self.visible_keys or index >= len(self.visible_keys):
             return False
         
-        # 获取数据库中的原始数据
-        if model_id and model_id in self.all_data:
+        # 获取当前记录的ID
+        if model_id and model_id in self.visible_keys:
             current_model_id = model_id
         elif index < len(self.visible_keys):
             current_model_id = self.visible_keys[index]
         else:
             return False
         
-        if current_model_id not in self.all_data:
-            return False
+        # 直接从数据库获取最新数据，避免使用可能过时的缓存
+        if hasattr(self.data_handler, "get_item"):
+            # 如果数据处理器支持直接获取单个项目
+            item = self.data_handler.get_item(current_model_id)
+            if not item:
+                return False
+        else:
+            # 回退到缓存数据
+            if current_model_id not in self.all_data:
+                return False
+            item = self.all_data[current_model_id]
         
-        item = self.all_data[current_model_id]
         attrs = self.data_handler.parse_item(item)
+        
+        # 打印调试信息，帮助诊断问题
+        print(f"比较数据 - ID: {current_model_id}, 用户: {user_uid}")
         
         # 分离字段值和checkbox值
         num_fields = len(self.field_configs)
@@ -665,17 +696,17 @@ class TaskManager:
         
         return False
     
-    def check_and_nav_prev(self, index, model_id, *field_values_and_checkboxes):
+    def check_and_nav_prev(self, user_uid, index, model_id, *field_values_and_checkboxes):
         """检查并导航到上一个"""
-        return self._check_and_nav(index, model_id, "prev", *field_values_and_checkboxes)
+        return self._check_and_nav(user_uid, index, model_id, "prev", *field_values_and_checkboxes)
     
-    def check_and_nav_next(self, index, model_id, *field_values_and_checkboxes):
+    def check_and_nav_next(self, user_uid, index, model_id, *field_values_and_checkboxes):
         """检查并导航到下一个"""
-        return self._check_and_nav(index, model_id, "next", *field_values_and_checkboxes)
+        return self._check_and_nav(user_uid, index, model_id, "next", *field_values_and_checkboxes)
     
-    def _check_and_nav(self, index, model_id, direction, *field_values_and_checkboxes):
+    def _check_and_nav(self, user_uid, index, model_id, direction, *field_values_and_checkboxes):
         """导航检查：对比当前值与数据库值，如果有差异显示弹窗，否则直接跳转"""
-        if self.has_real_changes(index, model_id, *field_values_and_checkboxes):
+        if self.has_real_changes(user_uid, index, model_id, *field_values_and_checkboxes):
             # 有修改，显示弹窗，记录方向
             # 返回与 nav_outputs 数量匹配的 gr.update()
             num_load_outputs = len(self.load_outputs)
@@ -684,7 +715,7 @@ class TaskManager:
         else:
             # 无修改，直接跳转并加载新数据
             new_index, _ = self._go_direction(index, model_id, direction)
-            new_data = self.load_data(new_index)
+            new_data = self.load_data(new_index, user_uid)
             return [new_index] + new_data + [gr.update(visible=False), gr.update()]
     
     def _go_direction(self, index, model_id, direction):
@@ -698,10 +729,10 @@ class TaskManager:
         new_model_id = self.visible_keys[new_index] if new_index < len(self.visible_keys) else ""
         return new_index, new_model_id
     
-    def save_and_continue_nav(self, index, model_id, direction, *field_values_and_checkboxes):
+    def save_and_continue_nav(self, user_uid, index, model_id, direction, *field_values_and_checkboxes):
         """保存并继续"""
         # 先保存
-        save_result_payload = self.save_data(index, model_id, *field_values_and_checkboxes)
+        save_result_payload = self.save_data(user_uid, index, model_id, *field_values_and_checkboxes)
         
         # 检查保存是否成功
         has_error = any(isinstance(item, str) and "❌ 保存失败" in item for item in save_result_payload)
@@ -713,14 +744,15 @@ class TaskManager:
         
         # 保存成功, 执行导航并加载新数据
         new_index, _ = self._go_direction(index, model_id, direction)
-        new_data = self.load_data(new_index)
+        # 确保user_uid是函数参数
+        new_data = self.load_data(new_index, user_uid)
         return [new_index] + new_data + [gr.update(visible=False)]
     
-    def skip_and_continue_nav(self, index, model_id, direction):
+    def skip_and_continue_nav(self, user_uid, index, model_id, direction):
         """放弃修改并继续"""
         # 执行导航并加载新数据
         new_index, _ = self._go_direction(index, model_id, direction)
-        new_data = self.load_data(new_index)
+        new_data = self.load_data(new_index, user_uid)
         return [new_index] + new_data + [gr.update(visible=False)]
     
     def export_to_jsonl(self):
@@ -780,9 +812,9 @@ class TaskManager:
             color: #721c24;
         ">❌ 未标注</div>'''
     
-    def _render_user_info(self, visible, others):
+    def _render_user_info(self, visible, others, user_uid):
         """渲染用户信息"""
-        return f'<div style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:12px;border-radius:8px;text-align:center;">👤 用户：{self.user_uid} | 📊 可见：{visible} | 🔒 其他：{others}</div>'
+        return f'<div style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:12px;border-radius:8px;text-align:center;">👤 用户：{user_uid} | 📊 可见：{visible} | 🔒 其他：{others}</div>'
     
     def get_allowed_paths(self):
         """
@@ -853,7 +885,7 @@ def create_login_interface(auth_handler, task_config, debug, dev_user=None):
         # 标注界面面板（登录后显示，如果是开发模式则初始显示）
         with gr.Column(visible=(dev_user is not None), elem_id="annotation_panel") as annotation_panel:
             # 总是构建界面
-            manager.build_interface()
+            manager.build_interface(unified_demo, user_state)
         
         # 登录逻辑
         def do_login(username, password):
@@ -864,10 +896,11 @@ def create_login_interface(auth_handler, task_config, debug, dev_user=None):
             result = auth_handler.login(username, password)
             if result["success"]:
                 username_value = result["user"]["username"]
-                # 更新 manager 的用户ID
-                manager.user_uid = username_value
-                # 重新计算可见数据
-                manager._refresh_visible_keys()
+                # 不要再更新共享的 manager.user_uid
+                # manager.user_uid = username_value
+                
+                # 重新计算可见数据, 传递用户ID
+                manager._refresh_visible_keys(username_value)
                 
                 # 返回成功状态和面板可见性，并更新user_state
                 return gr.update(value="登录成功", visible=False), gr.update(visible=False), gr.update(visible=True), username_value
@@ -881,9 +914,10 @@ def create_login_interface(auth_handler, task_config, debug, dev_user=None):
                 print(f"🔄 为用户 '{user}' 加载数据...")
                 # 登录后，重置到第一条数据
                 # 输出绑定要求返回 [index] + [component_values]
-                return [0] + manager.load_data(0)
+                # 将用户ID传递给load_data
+                return [0] + manager.load_data(0, user)
             # 如果用户未登录，返回空数据
-            return [-1] + manager.load_data(-1) # 使用无效索引返回空值
+            return [-1] + manager.load_data(-1, "pending_login") # 使用无效索引返回空值
 
         # 绑定登录事件
         login_outputs = [login_status, login_panel, annotation_panel, user_state]

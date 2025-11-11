@@ -63,44 +63,6 @@ class Annotation(Base):
         return {self.model_id: self.to_dict()}
 
 
-class User(Base):
-    """用户表"""
-    __tablename__ = 'users'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String(50), unique=True, nullable=False, comment='用户名')
-    password_hash = Column(String(255), nullable=False, comment='密码哈希')
-    name = Column(String(100), nullable=False, comment='真实姓名')
-    role = Column(String(20), default='annotator', comment='角色：admin/annotator')
-    created_at = Column(DateTime, default=datetime.now)
-    
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'username': self.username,
-            'name': self.name,
-            'role': self.role
-        }
-
-
-class TaskAssignment(Base):
-    """任务分配表"""
-    __tablename__ = 'task_assignments'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    model_id = Column(String(255), nullable=False, comment='模型ID')
-    user_id = Column(Integer, nullable=False, comment='用户ID')
-    assigned_at = Column(DateTime, default=datetime.now, comment='分配时间')
-    status = Column(String(20), default='pending', comment='状态：pending/in_progress/completed')
-    
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'model_id': self.model_id,
-            'user_id': self.user_id,
-            'assigned_at': self.assigned_at.isoformat() if self.assigned_at else None,
-            'status': self.status
-        }
 
 
 # ========================

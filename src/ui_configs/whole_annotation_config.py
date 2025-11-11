@@ -70,8 +70,8 @@ COMPONENTS = [
         "id": "scale_slider",
         "type": "slider",
         "label": "🔧 尺度调整",
-        "minimum": 0.01,
-        "maximum": 2.0,
+        "minimum": 0.0,
+        "maximum": 10.0,
         "value": 1.0,
         "step": 0.01,
         "target_field": "dimension"  # 关联到dimension字段
