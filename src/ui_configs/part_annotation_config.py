@@ -63,7 +63,7 @@ COMPONENTS = [
     {
         "id": "object_dimension",
         "type": "textbox",
-        "label": "物体尺寸(长✖️宽✖️高)",
+        "label": "尺寸 (X*Y*Z)",
         "lines": 1,
         # "has_checkbox": True,
         # "checkbox_label": "✗",
@@ -89,16 +89,16 @@ COMPONENTS = [
         "checkbox_label": "✗",
         "column": "right"
     },
-    {
-        "id": "density",
-        "type": "textbox",
-        "label": "密度",
-        "lines": 1,
-        "has_checkbox": True,
-        "checkbox_label": "✗",
-        "placeholder": "例如: 600 kg/m^3",
-        "column": "right"
-    },
+    # {
+    #     "id": "density",
+    #     "type": "textbox",
+    #     "label": "密度",
+    #     "lines": 1,
+    #     # "has_checkbox": True,
+    #     # "checkbox_label": "✗",
+    #     "placeholder": "例如: 600 kg/m^3",
+    #     "column": "right"
+    # },
     {
         "id": "mass",
         "type": "textbox",
@@ -169,7 +169,7 @@ LAYOUT_CONFIG = {
                     "children": [
                         "object_name",
                         "object_dimension",
-                        "label",
+                        # "density",
                     ]
                 },
                 # 右栏
@@ -177,8 +177,8 @@ LAYOUT_CONFIG = {
                     "type": "vstack",
                     "elem_id": "right_column",
                     "children": [
+                        "label",
                         "material",
-                        "density",
                         "mass"
                     ]
                 }

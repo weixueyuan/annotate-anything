@@ -46,6 +46,7 @@ class TaskManager:
         
         # 从COMPONENTS中提取字段配置（用于数据处理）
         self.field_configs = []
+        # 先添加所有带checkbox的字段
         for comp in self.components_config:
             if comp.get('has_checkbox') is not None:  # 只要定义了has_checkbox，就认为是字段
                 self.field_configs.append({
@@ -58,6 +59,33 @@ class TaskManager:
                     'placeholder': comp.get('placeholder', ''),
                     'process': comp.get('process')
                 })
+        
+        # 再添加滑块的目标字段（如果尚未包含）
+        slider_target_fields = []
+        for comp in self.components_config:
+            if comp.get('type') == 'slider':
+                target_field = comp.get('target_field')
+                if target_field and target_field not in slider_target_fields:
+                    slider_target_fields.append(target_field)
+                    # 检查是否已包含在field_configs中
+                    if not any(f['key'] == target_field for f in self.field_configs):
+                        # 查找目标字段的完整配置
+                        target_comp = None
+                        for c in self.components_config:
+                            if c['id'] == target_field:
+                                target_comp = c
+                                break
+                        if target_comp:
+                            self.field_configs.append({
+                                'key': target_comp['id'],
+                                'label': target_comp.get('label', target_comp['id']),
+                                'type': target_comp['type'],
+                                'lines': target_comp.get('lines', 1),
+                                'has_checkbox': target_comp.get('has_checkbox'),
+                                'interactive': target_comp.get('interactive', True),
+                                'placeholder': target_comp.get('placeholder', ''),
+                                'process': target_comp.get('process')
+                            })
         
         # 数据库路径
         self.db_path = f"databases/{self.task_name}.db"
@@ -146,14 +174,30 @@ class TaskManager:
         self.components['current_index'] = gr.State(value=0)
         self.components['nav_direction'] = gr.State(value="next")
         
-        # 动态查找尺度滑块的目标字段
-        self.dimension_field_name = None
-        for comp_config in self.components_config:
-            if comp_config.get('type') == 'slider' and comp_config.get('target_field'):
-                self.dimension_field_name = comp_config.get('target_field')
-                break
+        # 检查是否存在滑块组件
+        self.has_slider = False
+        self.slider_target_fields = []  # 存储所有滑块的目标字段
         
-        self.components['original_dimensions'] = gr.State(value="")  # 存储原始dimension/dimensions值
+        # 动态查找所有滑块组件及其目标字段
+        for comp_config in self.components_config:
+            if comp_config.get('type') == 'slider':
+                self.has_slider = True
+                target_field = comp_config.get('target_field')
+                if target_field:
+                    self.slider_target_fields.append(target_field)
+                    print(f"✓ 找到滑块组件，目标字段: {target_field}")
+                else:
+                    print(f"⚠️ 找到滑块组件，但未指定目标字段")
+        
+        # 打印调试信息
+        print(f"滑块状态: has_slider={self.has_slider}, target_fields={self.slider_target_fields}")
+        
+        # 只有在存在滑块组件时才创建original_dimensions组件
+        if self.has_slider:
+            print(f"✓ 创建滑块相关状态组件: original_dimensions")
+            self.components['original_dimensions'] = gr.State(value="")  # 存储原始值
+        else:
+            print(f"ℹ️ 当前任务不需要滑块组件，跳过创建相关组件")
         
         # 使用布局配置构建界面（同时创建和渲染组件）
         self.factory.build_layout(self.components_config, self.layout_config)
@@ -186,6 +230,12 @@ class TaskManager:
         # 提取字段组件和checkbox组件
         field_components = []
         checkbox_components = []
+        
+        # 打印所有字段配置，帮助调试
+        print("字段配置列表:")
+        for i, field_config in enumerate(self.field_configs):
+            print(f"  {i}: key='{field_config['key']}', has_checkbox={field_config.get('has_checkbox')}")
+        
         for field_config in self.field_configs:
             field_id = field_config['key']
             comp = self.components.get(field_id)
@@ -193,15 +243,20 @@ class TaskManager:
                 # (checkbox, textbox) 元组，按顺序解包
                 checkbox_components.append(comp[0])
                 field_components.append(comp[1])
+                print(f"字段 '{field_id}': 使用元组模式 (checkbox, textbox)")
             elif field_config.get('has_checkbox'):
                 # 这是一个历史遗留问题，理论上所有带checkbox的都应该是元组
                 # 但为了健壮性，如果不是元组但配置了checkbox，我们尝试从factory获取
                 chk = self.factory.get_checkbox(field_id)
                 if chk:
                     checkbox_components.append(chk)
+                    print(f"字段 '{field_id}': 从factory获取checkbox")
+                else:
+                    print(f"⚠️ 字段 '{field_id}': 配置了checkbox但未找到组件")
                 field_components.append(comp)
             else:
                 field_components.append(comp)
+                print(f"字段 '{field_id}': 普通字段，无checkbox")
         
         # 保存组件引用，方便后续使用
         self.field_components = field_components
@@ -219,6 +274,12 @@ class TaskManager:
         # 添加用户信息组件（如果存在）
         if 'user_info' in self.components:
             load_outputs.append(self.components['user_info'])
+            print(f"添加输出组件: user_info")
+        
+        # 打印所有组件配置，帮助调试
+        print("\n组件配置列表:")
+        for i, comp_config in enumerate(self.components_config):
+            print(f"  {i}: id='{comp_config['id']}', type='{comp_config['type']}', has_checkbox={comp_config.get('has_checkbox')}")
         
         for comp_config in self.components_config:
             comp_id = comp_config['id']
@@ -226,6 +287,7 @@ class TaskManager:
             
             # 跳过按钮组件
             if comp_type == 'button':
+                print(f"跳过按钮组件: {comp_id}")
                 continue
             
             comp = self.components.get(comp_id)
@@ -237,17 +299,30 @@ class TaskManager:
                         # load_data 返回 (checkbox_value, textbox_value)
                         load_outputs.append(checkbox)
                         load_outputs.append(comp)
+                        print(f"添加带复选框的文本框: {comp_id} (checkbox + textbox)")
                     else:
                         load_outputs.append(comp) # Fallback
+                        print(f"添加文本框(无复选框): {comp_id} (fallback)")
                 elif isinstance(comp, tuple):
                     # 兼容旧的元组模式（尽管在当前代码中不应出现）
                     load_outputs.extend(comp)
+                    print(f"添加元组组件: {comp_id}")
                 else:
                     load_outputs.append(comp)
+                    print(f"添加普通组件: {comp_id}")
         
-        # 添加 original_dimensions state
-        load_outputs.append(self.components['original_dimensions'])
+        # 只有当存在滑块组件时才添加 original_dimensions state
+        # 这确保了load_data函数返回的值数量与load_outputs列表中的组件数量一致
+        if self.has_slider:
+            print(f"✓ 添加滑块状态组件到输出列表")
+            load_outputs.append(self.components['original_dimensions'])
         self.load_outputs = load_outputs  # 保存以备后用
+        
+        # 打印输出组件总数
+        print(f"\n输出组件总数: {len(load_outputs)}")
+        for i, comp in enumerate(load_outputs):
+            comp_name = getattr(comp, 'elem_id', f"组件{i}")
+            print(f"  {i}: {comp_name}")
         
         # 页面加载时加载数据
         demo.load(fn=self.load_data, inputs=[self.components['current_index'], user_state], outputs=self.load_outputs)
@@ -255,20 +330,29 @@ class TaskManager:
         # 移除 model_id 变化时自动加载数据的事件
         # 只保留按回车键触发的搜索事件，避免用户修改但未按回车时触发搜索
         
-        # 滑块变化时更新dimension/dimensions字段
-        if self.dimension_field_name and scale_slider:
-            dimensions_idx = None
-            for i, field in enumerate(self.field_configs):
-                if field['key'] == self.dimension_field_name:
-                    dimensions_idx = i
-                    break
+        # 滑块变化时更新目标字段
+        # 只有当存在滑块组件和目标字段时才绑定事件
+        if scale_slider and self.slider_target_fields:
+            print(f"✓ 绑定滑块变化事件")
             
-            if dimensions_idx is not None:
-                scale_slider.change(
-                    fn=self.scale_dimensions,
-                    inputs=[self.components['original_dimensions'], scale_slider],
-                    outputs=[field_components[dimensions_idx]]
-                )
+            # 查找所有目标字段的索引
+            for target_field in self.slider_target_fields:
+                target_idx = None
+                for i, field in enumerate(self.field_configs):
+                    if field['key'] == target_field:
+                        target_idx = i
+                        print(f"  - 目标字段 '{target_field}' 在字段列表中的索引: {target_idx}")
+                        break
+                
+                if target_idx is not None:
+                    scale_slider.change(
+                        fn=self.scale_dimensions,
+                        inputs=[self.components['original_dimensions'], scale_slider],
+                        outputs=[field_components[target_idx]]
+                    )
+                    print(f"  - 滑块事件绑定成功，目标字段: {target_field}")
+                else:
+                    print(f"⚠️ 未找到目标字段 '{target_field}' 的索引，无法绑定滑块事件")
         
         # 搜索功能（按回车触发）- model_id既显示也可搜索
         if model_id_display:
@@ -331,6 +415,7 @@ class TaskManager:
         根据组件配置动态加载数据
         通过 data_field 属性将数据库字段映射到UI组件
         """
+        print(f"\n加载数据: index={index}, user_uid={user_uid}")
         # 确保 visible_keys 是最新的
         visible_keys = self._refresh_visible_keys(user_uid)
 
@@ -356,7 +441,14 @@ class TaskManager:
                     empty_result.append(None) # 修复：图片组件为空时必须返回None
                 else:
                     empty_result.append("")
-            return empty_result + [""]  # +1 for original_dimensions state
+            
+            # 只有当存在滑块组件时才添加 original_dimensions state
+            # 这确保了返回值数量与load_outputs列表中的组件数量一致
+            if self.has_slider:
+                empty_result.append("")  # +1 for original_dimensions state
+                print(f"ℹ️ load_data (空数据): 添加滑块状态值")
+            
+            return empty_result
         
         model_id = self.visible_keys[index]
         
@@ -381,7 +473,13 @@ class TaskManager:
                     empty_result.append(None) # 修复：图片组件为空时必须返回None
                 else:
                     empty_result.append("")
-            return empty_result + [""]
+            # 只有当存在滑块组件时才添加 original_dimensions state
+            # 这确保了返回值数量与load_outputs列表中的组件数量一致
+            if self.has_slider:
+                empty_result.append("")  # +1 for original_dimensions state
+                print(f"ℹ️ load_data (无效项): 添加滑块状态值")
+            
+            return empty_result
 
         attrs = self.data_handler.parse_item(item)
         
@@ -403,6 +501,9 @@ class TaskManager:
         # 根据配置动态构建返回值（跳过按钮）
         result = []
         original_dims_value = ""  # 用于尺度滑块
+        
+        # 打印调试信息
+        print(f"构建返回值: model_id={model_id}")
         
         # 添加用户信息
         if 'user_info' in self.components:
@@ -453,13 +554,18 @@ class TaskManager:
                 # 添加checkbox值
                 checkbox_value = attrs.get(f"chk_{data_field}", False)
                 
+                # 打印调试信息
+                print(f"字段 '{data_field}': checkbox={checkbox_value}, value='{processed_value}'")
+                
                 # 按照 (checkbox, textbox) 的顺序添加
                 result.append(checkbox_value)
                 result.append(processed_value)
                 
-                # 保存dimension/dimensions原始值（用于尺度滑块）
-                if self.dimension_field_name and data_field == self.dimension_field_name:
-                    original_dims_value = attrs.get(self.dimension_field_name, '')
+                # 保存字段原始值（用于滑块）
+                if self.has_slider and data_field in self.slider_target_fields:
+                    original_dims_value = attrs.get(data_field, '')
+                    print(f"  - 保存字段 '{data_field}' 的原始值: '{original_dims_value}'")
+            
             
             # 处理其他图片字段（part_annotation 有多个图片）
             elif comp_type == 'image' and data_field not in ['model_id', '_computed_status']:
@@ -473,14 +579,38 @@ class TaskManager:
                 # 其他普通字段
                 value = attrs.get(data_field, '')
                 result.append(value)
+                # 如果这个普通字段是滑块的目标，也需要保存其原始值
+                if self.has_slider and data_field in self.slider_target_fields and not comp_config.get('has_checkbox'):
+                    original_dims_value = value
+                    print(f"  - 保存字段 '{data_field}' 的原始值 (普通字段): '{original_dims_value}'")
         
-        # 添加 original_dimensions state
-        result.append(original_dims_value)
+        # 只有当存在滑块组件时才添加 original_dimensions state
+        # 这确保了返回值数量与load_outputs列表中的组件数量一致
+        if self.has_slider:
+            result.append(original_dims_value)
+            print(f"ℹ️ load_data (有效数据): 添加滑块状态值 '{original_dims_value}'")
+        
+        # 打印返回值数量
+        print(f"返回值数量: {len(result)}")
+        for i, val in enumerate(result):
+            val_str = str(val)
+            if len(val_str) > 50:
+                val_str = val_str[:50] + "..."
+            print(f"  {i}: {val_str}")
         
         return result
     
     def scale_dimensions(self, original_dims, scale_value):
-        """根据尺度滑块值计算缩放后的dimensions"""
+        """
+        根据滑块值计算缩放后的值
+        
+        Args:
+            original_dims: 原始值字符串，格式如 "0.78*0.41*0.54" 或其他格式
+            scale_value: 缩放比例，浮点数
+            
+        Returns:
+            缩放后的字符串
+        """
         if not original_dims or not original_dims.strip():
             return ""
         try:
