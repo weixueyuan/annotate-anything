@@ -41,22 +41,26 @@ TASK_CONFIGS = {
     'annotation': {
         'source': 'database_jsonl/merged_attributes.jsonl',
         'db': 'databases/annotation.db',
-        'description': '物体属性标注'
+        'description': '物体属性标注',
+        # 'base_path': '/mnt/data'  # 默认图片基础路径
     },
     'whole_annotation': {
         'source': 'database_jsonl/whole_annotation.jsonl',
         'db': 'databases/whole_annotation.db',
-        'description': '整体物体标注'
+        'description': '整体物体标注',
+        'base_path': '/mnt/inspurfs/IDC_t/lvzhaoyang_group/digital_content/lianxinyu/datasets/partnet_mobility_by_category_processed'  # 默认图片基础路径
     },
     'part_annotation': {
         'source': 'database_jsonl/part_annotation.jsonl',
         'db': 'databases/part_annotation.db',
-        'description': '部件标注'
+        'description': '部件标注',
+        'base_path': '/mnt/inspurfs/IDC_t/lvzhaoyang_group/digital_content/lianxinyu/datasets/partnet_mobility_by_category_processed'  # 默认图片基础路径
     },
     'test': {
         'source': 'database_jsonl/test.jsonl',
         'db': 'databases/test.db',
-        'description': '测试数据'
+        'description': '测试数据',
+        # 'base_path': '/mnt/data'  # 默认图片基础路径
     }
 }
 
@@ -85,14 +89,20 @@ class GenericImporter:
                         continue
         return records
     
-    def transform_record(self, model_id: str, attrs: dict) -> tuple:
+    def transform_record(self, model_id: str, attrs: dict, base_path: str = None) -> tuple:
         """
         转换单条记录 - 通用处理
         
         自动识别和处理：
         - 元数据字段（annotated, uid, score）
         - 数组字段（自动转为换行符分隔的字符串）
+        - 图片路径字段（自动拼接基础路径）
         - 其他字段保持原样
+        
+        Args:
+            model_id: 模型ID
+            attrs: 属性字典
+            base_path: 图片路径的基础路径，如果提供则会拼接到相对路径前
         """
         # 元数据（从attrs中提取，如果不存在则用默认值）
         metadata = {
@@ -108,8 +118,13 @@ class GenericImporter:
             if key in ['annotated', 'uid', 'score']:
                 continue
             
+            # 处理图片路径字段
+            if key.startswith('image_url') and isinstance(value, str) and base_path and not value.startswith('/'):
+                # 拼接基础路径和相对路径
+                business_data[key] = os.path.join(base_path, value)
+                print(f"  处理图片路径: {key} = {business_data[key]}")
             # 自动处理数组字段：转为字符串
-            if isinstance(value, list):
+            elif isinstance(value, list):
                 # 如果是字符串数组，用换行符连接
                 if value and isinstance(value[0], str):
                     business_data[key] = '\n'.join(value)
@@ -122,13 +137,24 @@ class GenericImporter:
         
         return metadata, business_data
     
-    def import_to_db(self, source: str, db_path: str, clean: bool = False, batch_size: int = 1000):
-        """导入数据到数据库"""
+    def import_to_db(self, source: str, db_path: str, clean: bool = False, batch_size: int = 1000, base_path: str = None):
+        """
+        导入数据到数据库
+        
+        Args:
+            source: 源数据文件路径
+            db_path: 数据库文件路径
+            clean: 是否清空数据库
+            batch_size: 批处理大小
+            base_path: 图片路径的基础路径，如果提供则会拼接到相对路径前
+        """
         print(f"\n{'='*60}")
         print(f"开始导入数据")
         print(f"{'='*60}")
         print(f"📂 数据源: {source}")
         print(f"🗄️  数据库: {db_path}")
+        if base_path:
+            print(f"🖼️  图片基础路径: {base_path}")
         
         # 初始化数据库
         engine = get_engine(db_path)
@@ -154,7 +180,7 @@ class GenericImporter:
                     attrs = record[model_id]
                     
                     # 转换数据
-                    metadata, business_data = self.transform_record(model_id, attrs)
+                    metadata, business_data = self.transform_record(model_id, attrs, base_path)
                     
                     # 检查是否存在
                     existing = session.query(Annotation).filter_by(model_id=model_id).first()
@@ -198,6 +224,38 @@ class GenericImporter:
             print(f"  - 新增: {self.stats['imported']} 条")
             print(f"  - 更新: {self.stats['updated']} 条")
             print(f"  - 错误: {self.stats['errors']} 条")
+            
+            # 查询并打印第一条记录，用于验证
+            try:
+                first_record = session.query(Annotation).first()
+                if first_record:
+                    print(f"\n📝 第一条记录示例:")
+                    print(f"  - ID: {first_record.model_id}")
+                    print(f"  - 标注状态: {'已标注' if first_record.annotated else '未标注'}")
+                    print(f"  - 用户: {first_record.uid or '无'}")
+                    print(f"  - 数据:")
+                    
+                    # 打印数据字段（最多显示前5个字段）
+                    if first_record.data:
+                        for i, (key, value) in enumerate(first_record.data.items()):
+                            if i >= 5:
+                                print(f"      ... (还有 {len(first_record.data) - 5} 个字段)")
+                                break
+                            
+                            # 对于长字符串，只显示前50个字符
+                            if isinstance(value, str) and len(value) > 50:
+                                value_display = value[:50] + "..."
+                            else:
+                                value_display = value
+                                
+                            print(f"      {key}: {value_display}")
+                            
+                            # 特别关注图片URL字段
+                            if key.startswith('image _url'):
+                                print(f"        (图片路径已处理: {'是' if base_path and not value.startswith('/') else '否'})")
+            except Exception as e:
+                print(f"⚠️ 无法打印示例记录: {e}")
+                
             print(f"{'='*60}\n")
             
         except Exception as e:
@@ -248,6 +306,8 @@ def main():
                        help='增量导入（不清除旧数据），默认为清空导入')
     parser.add_argument('--list', '-l', action='store_true',
                        help='列出所有支持的任务')
+    parser.add_argument('--base-path', '-b', type=str,
+                       help='图片路径的基础路径，用于拼接相对路径')
     
     args = parser.parse_args()
     
@@ -282,7 +342,9 @@ def main():
                 continue
             
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
-            importer.import_to_db(source=source, db_path=db_path, clean=clean_mode)
+            # 使用任务配置中的基础路径，如果命令行参数有指定则优先使用命令行参数
+            base_path = args.base_path or config.get('base_path')
+            importer.import_to_db(source=source, db_path=db_path, clean=clean_mode, base_path=base_path)
         
         print("\n🎉 所有任务导入完成！\n")
         return
@@ -312,7 +374,13 @@ def main():
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     
     importer = GenericImporter()
-    importer.import_to_db(source=source, db_path=db_path, clean=clean_mode)
+    
+    # 获取基础路径：优先使用命令行参数，其次使用任务配置（如果是任务模式）
+    base_path = args.base_path
+    if not base_path and args.task:
+        base_path = TASK_CONFIGS[args.task].get('base_path')
+    
+    importer.import_to_db(source=source, db_path=db_path, clean=clean_mode, base_path=base_path)
     
     if args.task:
         print(f"✅ 可以运行: python src/main_multi.py --task {args.task} --dev --uid user1\n")
