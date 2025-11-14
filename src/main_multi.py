@@ -1039,22 +1039,35 @@ def create_login_interface(auth_handler, task_config, debug, dev_user=None):
         # 登录逻辑
         def do_login(username, password):
             """处理登录，成功后更新用户状态"""
+            has_user_info = 'user_info' in manager.components
+
             if not username or not password:
-                return gr.update(value="请输入用户名和密码", visible=True), gr.update(visible=True), gr.update(visible=False), username
-            
+                base_return = [gr.update(value="请输入用户名和密码", visible=True), gr.update(visible=True), gr.update(visible=False), username]
+                if has_user_info:
+                    base_return.append(gr.update())
+                return tuple(base_return)
+
             result = auth_handler.login(username, password)
             if result["success"]:
                 username_value = result["user"]["username"]
-                # 不要再更新共享的 manager.user_uid
-                # manager.user_uid = username_value
+                # 登录成功后，更新 manager.user_uid
+                manager.user_uid = username_value
                 
                 # 重新计算可见数据, 传递用户ID
                 manager._refresh_visible_keys(username_value)
                 
-                # 返回成功状态和面板可见性，并更新user_state
-                return gr.update(value="登录成功", visible=False), gr.update(visible=False), gr.update(visible=True), username_value
+                base_return = [gr.update(value="登录成功", visible=False), gr.update(visible=False), gr.update(visible=True), username_value]
+                if has_user_info:
+                    visible_count = len(manager.visible_keys)
+                    other_count = len(manager.all_data) - visible_count
+                    user_info_html = manager._render_user_info(visible_count, other_count, username_value)
+                    base_return.append(gr.update(value=user_info_html))
+                return tuple(base_return)
             else:
-                return gr.update(value=result["message"], visible=True), gr.update(visible=True), gr.update(visible=False), ""
+                base_return = [gr.update(value=result["message"], visible=True), gr.update(visible=True), gr.update(visible=False), ""]
+                if has_user_info:
+                    base_return.append(gr.update())
+                return tuple(base_return)
 
         # 加载数据的辅助函数
         def load_user_data(user):
@@ -1070,6 +1083,8 @@ def create_login_interface(auth_handler, task_config, debug, dev_user=None):
 
         # 绑定登录事件
         login_outputs = [login_status, login_panel, annotation_panel, user_state]
+        if 'user_info' in manager.components:
+            login_outputs.append(manager.components['user_info'])
         login_btn.click(
             fn=do_login,
             inputs=[login_username, login_password],
