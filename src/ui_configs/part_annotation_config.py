@@ -57,7 +57,6 @@ COMPONENTS = [
         "lines": 1,
         # "has_checkbox": True,
         # "checkbox_label": "✗",
-        "column": "left",
         "interactive": False,  # 设置为不可编辑
         "data_field": "object_name"  # 添加数据字段映射
     },
@@ -69,18 +68,22 @@ COMPONENTS = [
         # "has_checkbox": True,
         # "checkbox_label": "✗",
         "placeholder": "例如: 0.78*0.41*0.54",
-        "column": "left",
         "interactive": False,  # 设置为不可编辑
         "data_field": "object_dimension"  # 添加数据字段映射
     },
     {
-        "id": "label",
+        "id": "overall_description",
         "type": "textbox",
+        "label": "总体描述",
+        "lines": 3,
+        "interactive": False,  # 设置为不可编辑
+    },
+    {
+        "id": "label",
+        "type": "multiselect",
         "label": "部件名称",
-        "lines": 1,
         "has_checkbox": True,
         "checkbox_label": "✗",
-        "column": "left",
         "data_field": "label"  # 添加数据字段映射
     },
     {
@@ -89,19 +92,8 @@ COMPONENTS = [
         "label": "材质",
         "has_checkbox": True,
         "checkbox_label": "✗",
-        "column": "right",
         "data_field": "material"  # 添加数据字段映射
     },
-    # {
-    #     "id": "density",
-    #     "type": "textbox",
-    #     "label": "密度",
-    #     "lines": 1,
-    #     # "has_checkbox": True,
-    #     # "checkbox_label": "✗",
-    #     "placeholder": "例如: 600 kg/m^3",
-    #     "column": "right"
-    # },
     {
         "id": "mass",
         "type": "textbox",
@@ -110,7 +102,6 @@ COMPONENTS = [
         "has_checkbox": True,
         "checkbox_label": "✗",
         "placeholder": "例如: 25 kg",
-        "column": "right",
         "data_field": "mass"  # 添加数据字段映射
     },
     
@@ -174,7 +165,7 @@ LAYOUT_CONFIG = {
                     "children": [
                         "object_name",
                         "object_dimension",
-                        # "density",
+                        "overall_description",
                     ]
                 },
                 # 右栏

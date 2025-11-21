@@ -455,8 +455,13 @@ class TaskManager:
                 # 获取选项列表
                 choices = attrs.get(f"{data_field}_choice", [])
                 
+                # 修复：确保所有选中的值都在选项列表中
+                # 将 value 中不在 choices 里的项添加到 choices 中
+                # 使用集合操作去重并合并
+                all_choices = list(set(choices).union(set(value)))
+                
                 # 更新组件的值和选项
-                result.append(gr.update(value=value, choices=choices))
+                result.append(gr.update(value=value, choices=all_choices))
             else: # Textbox, etc.
                 value = attrs.get(data_field, '')
                 
@@ -761,58 +766,59 @@ class TaskManager:
             # 因为它的“变化”体现在滑块上。
             # 我们真正需要比较的是 scale_slider 的值。
             # 因此，我们在这里跳过 dimension 字段的比较。
-            if self.has_slider and field_key in self.slider_target_fields:
-                continue
-
-            current_value = value_map.get(field_id)
-            if current_value is None:
-                current_value = ""
+            # 仅当字段是滑块目标时，才跳过其值的比较
+            is_slider_target = self.has_slider and field_key in self.slider_target_fields
             
-            # 更智能的字符串对比
-            original_str = str(processed_original_value).strip()
-            current_str = str(current_value).strip()
-            
-            # 对 dimension 类字段，进行更宽松的比较（忽略内部空格差异）
-            # 同时也适用于其他用*分隔的字符串
-            if '*' in original_str or '*' in current_str:
-                if original_str.replace(' ', '') != current_str.replace(' ', ''):
-                    print(f"字段 '{field_key}' 已修改: '{processed_original_value}' -> '{current_value}'")
-                    return True
-            # 对滑块进行特殊处理
-            elif field_type == 'slider':
-                # 归一化原始值
-                try:
-                    original_float = float(original_value) if original_value is not None and str(original_value).strip() != "" else 1.0
-                except (ValueError, TypeError):
-                    original_float = 1.0
-
-                # 归一化当前值
+            if not is_slider_target:
                 current_value = value_map.get(field_id)
-                try:
-                    current_float = float(current_value) if current_value is not None and str(current_value).strip() != "" else 1.0
-                except (ValueError, TypeError):
-                    current_float = 1.0
+                if current_value is None:
+                    current_value = ""
+                
+                # 更智能的字符串对比
+                original_str = str(processed_original_value).strip()
+                current_str = str(current_value).strip()
+                
+                # 对 dimension 类字段，进行更宽松的比较（忽略内部空格差异）
+                # 同时也适用于其他用*分隔的字符串
+                if '*' in original_str or '*' in current_str:
+                    if original_str.replace(' ', '') != current_str.replace(' ', ''):
+                        print(f"字段 '{field_key}' 已修改: '{processed_original_value}' -> '{current_value}'")
+                        return True
+                # 对滑块进行特殊处理
+                elif field_type == 'slider':
+                    # 归一化原始值
+                    try:
+                        original_float = float(original_value) if original_value is not None and str(original_value).strip() != "" else 1.0
+                    except (ValueError, TypeError):
+                        original_float = 1.0
 
-                # 比较浮点数
-                if original_float != current_float:
-                    print(f"字段 '{field_key}' 已修改 (slider): {original_float} -> {current_float}")
-                    return True
-            # 对列表类型进行特殊处理
-            elif isinstance(original_value, list) and field_type == 'multiselect':
-                # 确保 current_value 是列表格式
-                if not isinstance(current_value, list):
-                    current_list = [current_value] if current_value else []
+                    # 归一化当前值
+                    current_value = value_map.get(field_id)
+                    try:
+                        current_float = float(current_value) if current_value is not None and str(current_value).strip() != "" else 1.0
+                    except (ValueError, TypeError):
+                        current_float = 1.0
+
+                    # 比较浮点数
+                    if original_float != current_float:
+                        print(f"字段 '{field_key}' 已修改 (slider): {original_float} -> {current_float}")
+                        return True
+                # 对列表类型进行特殊处理
+                elif isinstance(original_value, list) and field_type == 'multiselect':
+                    # 确保 current_value 是列表格式
+                    if not isinstance(current_value, list):
+                        current_list = [current_value] if current_value else []
+                    else:
+                        current_list = current_value
+                        
+                    if set(original_value) != set(current_list):
+                        print(f"字段 '{field_key}' 已修改 (列表): {original_value} -> {current_list}")
+                        return True
                 else:
-                    current_list = current_value
-                    
-                if set(original_value) != set(current_list):
-                    print(f"字段 '{field_key}' 已修改 (列表): {original_value} -> {current_list}")
-                    return True
-            else:
-                # 其他字段，正常比较
-                if original_str != current_str:
-                    print(f"字段 '{field_key}' 已修改: '{processed_original_value}' -> '{current_value}'")
-                    return True
+                    # 其他字段，正常比较
+                    if original_str != current_str:
+                        print(f"字段 '{field_key}' 已修改: '{processed_original_value}' -> '{current_value}'")
+                        return True
 
             # 比较复选框值
             if field.get('has_checkbox'):
