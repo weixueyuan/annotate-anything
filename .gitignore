@@ -6,28 +6,43 @@ __pycache__/
 .Python
 
 # 数据库
-databases/*.db
+databases/
 *.db
 
-# 数据文件（可选）
-# *.jsonl
+# 数据文件（包含实际标注数据）
+database_jsonl/
+*.jsonl
+
+# 配置文件（包含敏感信息：用户名和密码）
+config/admin_config.jsonl
+config/user_config.jsonl
 
 # 环境
 venv/
 env/
 .env
+.env.local
+.env.*.local
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
 # 临时文件
+logs/
 *.log
 .DS_Store
+*.tmp
+*.temp
 
-
-
-# 导出文件
+# 导出文件（包含实际标注数据）
 exports/
+
+# 系统文件
+Thumbs.db
+*.bak
+*~

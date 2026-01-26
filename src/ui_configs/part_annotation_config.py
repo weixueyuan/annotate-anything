@@ -99,10 +99,9 @@ COMPONENTS = [
         "type": "textbox",
         "label": "质量",
         "lines": 1,
-        "has_checkbox": True,
-        "checkbox_label": "✗",
-        "placeholder": "例如: 25 kg",
-        "data_field": "mass"  # 添加数据字段映射
+        # "has_checkbox": True,
+        # "checkbox_label": "✗",
+        "interactive": False,  # 设置为不可编辑
     },
     
     # 进度显示

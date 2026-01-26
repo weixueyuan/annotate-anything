@@ -80,8 +80,9 @@ COMPONENTS = [
         "type": "textbox",
         "label": "总体描述",
         "lines": 3,
-        "has_checkbox": True,
-        "checkbox_label": "✗",
+        # "has_checkbox": True,
+        # "checkbox_label": "✗",
+        "interactive": False,  # 设置为不可编辑
         # data_field 默认为 "overall_description"
     },
     

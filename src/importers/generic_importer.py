@@ -44,30 +44,30 @@ from src.db_models import Annotation, get_session, get_engine, Base
 
 # 任务配置映射（默认路径）
 TASK_CONFIGS = {
-    'annotation': {
-        'source': 'database_jsonl/merged_attributes.jsonl',
-        'db': 'databases/annotation.db',
-        'description': '物体属性标注',
-        # 'base_path': '/mnt/data'  # 默认图片基础路径
-    },
+    # 'annotation': {
+    #     'source': 'database_jsonl/merged_attributes.jsonl',
+    #     'db': 'databases/annotation.db',
+    #     'description': '物体属性标注',
+    #     # 'base_path': '/mnt/data'  # 默认图片基础路径
+    # },
     'whole_annotation': {
-        'source': 'database_jsonl/whole_annotation.jsonl',
+        'source': '/mnt/data/Partnet_Mobility/whole_annotation.jsonl',
         'db': 'databases/whole_annotation.db',
         'description': '整体物体标注',
-        'base_path': '/root/data/Articulation-3000'  # 默认图片基础路径
+        'base_path': '/mnt/data/Partnet_Mobility'  # 默认图片基础路径
     },
     'part_annotation': {
-        'source': 'database_jsonl/part_annotation.jsonl',
+        'source': '/mnt/data/Partnet_Mobility/part_annotation.jsonl',
         'db': 'databases/part_annotation.db',
         'description': '部件标注',
-        'base_path': '/root/data/Articulation-3000'  # 默认图片基础路径
+        'base_path': '/mnt/data/Partnet_Mobility'  # 默认图片基础路径
     },
-    'test': {
-        'source': 'database_jsonl/test.jsonl',
-        'db': 'databases/test.db',
-        'description': '测试数据',
-        # 'base_path': '/mnt/data'  # 默认图片基础路径
-    }
+    # 'test': {
+    #     'source': 'database_jsonl/test.jsonl',
+    #     'db': 'databases/test.db',
+    #     'description': '测试数据',
+    #     # 'base_path': '/mnt/data'  # 默认图片基础路径
+    # }
 }
 
 

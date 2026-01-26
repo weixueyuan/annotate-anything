@@ -9,6 +9,7 @@ import os
 import sys
 import importlib
 import argparse
+import atexit
 import gradio as gr
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from src.jsonl_handler import JSONLHandler
 from src.field_processor import FieldProcessor
 from src.component_factory import ComponentFactory
 from src.routes import ROUTES, DEFAULT_PORT
+from src.logger import setup_logging
 
 
 class TaskManager:
@@ -1164,6 +1166,19 @@ def main():
     # 端口选择（命令行 > 任务配置 > 默认）
     if args.port is None:
         args.port = task_config.get('port', DEFAULT_PORT)
+    
+    # 初始化日志系统（在确定任务后立即设置）
+    logger = setup_logging(task_config['task'], project_root)
+    logger.start()
+    
+    # 注册退出时的清理函数
+    def cleanup_logger():
+        logger.stop()
+    atexit.register(cleanup_logger)
+    
+    # 打印日志文件信息
+    print(f"📝 日志文件: {logger.log_file_path}")
+    print()
     
     # 判断是否需要登录
     if args.dev:
